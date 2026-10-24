@@ -50,7 +50,8 @@
         }
     },
     "security": {
-        "interceptNotify": true
+        "interceptNotify": true,
+        "errorsToOwnerOnly": true
     },
     "slang": {
         "enabled": true,

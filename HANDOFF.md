@@ -616,3 +616,16 @@ python cover.py --source "歌名或链接或文件路径" --out audio\x.mp3 --se
 - 有链接就按链接取，只有没链接才搜索；搜索优先 QQ 音乐，全 VIP 才抖音。
 - 提醒：我自己**听不到音频**，只能靠指标（时长、电平、F0、包络相关）判断，必要时如实说明。
 - 桌面那三份文档（说明书/管理员指令/角色卡）随改动同步更新。
+
+---
+
+## 12. 2026-10-24 修复（30 秒视频 / 会话卡死 / 报错只给管理员）
+
+| 问题 | 根因 | 修法 |
+|---|---|---|
+| 视频时长卡在 3~5 秒 | `qq_video` 工具说明写着「只允许 3~5 秒」，AI 照它拒绝 | 说明与兜底区间统一改成 **2~30 秒**（`src/mcp-snowluma-safe.js`、`src/bridge.js`、`src/media-tools.js`、控制台文案） |
+| DSH 重启后 QQ 永久不回 | DSH 重启会杀掉在途回合，`turn/end` 不再到达 → `v2TurnStartAt`/`collectors` 成了僵尸 → 会话永久「繁忙」，消息只进内存队列 | ① DSH 断开/重连时 `resetStaleTurnMarkers()` 清僵尸并补发积压唤醒；② `isConversationBusyV2()` 加 30 分钟硬兜底 |
+| 报错直接甩给群友 | 各处的 `sendToQQ(key, '⚠️ ...失败...')` 不看身份 | 新增 `sendErrorToKey()`：管理员全量、普通用户默认不发；开关 `security.errorsToOwnerOnly`（默认 true）。同时把 agent 回合错误写进 `state/bridge.log` |
+| 整轮失败 `tool input is invalid JSON` | 模型把用户整段剧本（含【】、引号、换行）复制进工具参数 | 预设与人格卡加「工具参数硬规则」：压缩成一句话 ≤200 字，禁止整段复制、禁止换行/双引号 |
+
+改完必须：**重启桥接**（代码）；**重启 DSH**（preset 与 MCP 工具说明在启动时注册）。

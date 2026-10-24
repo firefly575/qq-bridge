@@ -2981,6 +2981,7 @@ async function main() {
         dshReady = true;
         lastMode = currentMode;
         log(`DSH 已就绪（模式: ${currentMode}）`);
+        resetStaleTurnMarkers('DSH 重连');
   // 延后 5 秒再清：启动瞬间配置/目录可能还没就绪
   setTimeout(() => {
     try {
@@ -3024,6 +3025,7 @@ async function main() {
     } else if (dshReady) {
       dshReady = false;
       log('⚠️ DSH 不可用（重启中？），QQ 消息将入队等待');
+      resetStaleTurnMarkers('DSH 断开');
     }
   };
   function startDshWatch() {
@@ -7143,7 +7145,32 @@ function startConsoleServer() {
     return sendChain;
   }
 
-  /** 上一批发往该会话的消息是否全部成功。 */
+  // ── 报错只给管理员 ────────────────────────────────────────────
+  // 需求：出错细节只发给 ownerQQ，其他用户一律不发（避免把内部报错、路径、额度、
+  // 供应商错误码直接甩给群友）。开关：security.errorsToOwnerOnly（默认 true）。
+  function isOwnerKey(key) {
+    return key === `private:${String(cfg.ownerQQ ?? '')}` && Boolean(cfg.ownerQQ);
+  }
+  function errorsToOwnerOnly() {
+    return cfg.security?.errorsToOwnerOnly !== false;
+  }
+  /**
+   * 发送「错误类」消息：管理员全量收到；普通用户默认什么都不发（只记日志）。
+   * @param {string} key 会话 key
+   * @param {string} msg 面向管理员的错误文本
+   * @param {{ alwaysSend?: boolean, generic?: string }} [opts]
+   *        alwaysSend：无视开关直发（用于「已停止」这类非报错状态）
+   *        generic：给普通用户的替代文案；不传 = 普通用户什么都收不到
+   */
+  function sendErrorToKey(key, msg, opts = {}) {
+    if (opts.alwaysSend) return sendToQQ(key, msg);
+    if (isOwnerKey(key) || !errorsToOwnerOnly()) return sendToQQ(key, msg);
+    log(`[error] 非管理员会话，不发送报错 (${key}): ${String(msg).slice(0, 200)}`);
+    if (opts.generic) return sendToQQ(key, opts.generic);
+    return Promise.resolve();
+  }
+
+    /** 上一批发往该会话的消息是否全部成功。 */
   function lastSendSucceeded(key) {
     return lastSendFailed.get(key) !== true;
   }
@@ -8315,7 +8342,7 @@ function startConsoleServer() {
       log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
       appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
       if (cfg.security?.interceptNotify !== false) {
-        await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
+        await sendErrorToKey(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。', { generic: '⚠️ 这条我换个说法再说。' });
       }
       return false;
     }
@@ -9127,7 +9154,7 @@ function startConsoleServer() {
       if (opts.farewell) social.exitingSessions.delete(sessionId);
       const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
       const safeErrText = shouldAuditKey(key) && SENSITIVE_RE.test(errText) ? '（含敏感信息，已隐藏）' : errText;
-      if (!opts.silent) await sendToQQ(key, `⚠️ 消息未被接受：${safeErrText}`);
+      if (!opts.silent) await sendErrorToKey(key, `⚠️ 消息未被接受：${safeErrText}`);
       return { ok: false, error: safeErrText };
     }
     if (wakeSnapshot && isCurrentSession(key, sessionId)
@@ -10120,13 +10147,58 @@ function startConsoleServer() {
     log(`[reserved2] 已安排回复检查唤醒 ${key}，${Math.round(delay / 1000)}s 后检查`);
   }
 
+  // DSH 重启/断开会把在途回合一起杀掉，但 turn/end 事件永远不会再到达，
+  // 于是 v2TurnStartAt / collectors 里的标记成了僵尸 —— 会话会被永久判定为「繁忙」，
+  // 新消息只进 pendingWakeReasons 永远不投递（表现为「QQ 不回消息」）。
+  // 这里在 DSH 断连/重连时清掉僵尸标记，并把积压的唤醒补发一次。
+  function resetStaleTurnMarkers(reason) {
+    const staleCount = v2TurnStartAt.size + collectors.size;
+    v2TurnStartAt.clear();
+    collectors.clear();
+    try { pendingSendToolCalls.clear(); } catch {}
+    try { sendToolSucceededSessions.clear(); } catch {}
+    try { toolCallNames.clear(); } catch {}
+    if (staleCount > 0) log(`[reserved2] ${reason}：清理了 ${staleCount} 个僵死回合标记，会话恢复可用`);
+
+    // 补发积压唤醒（只在触发它的消息仍未读时才补）
+    try {
+      for (const key of socialV2.conversations.keys()) {
+        const st = getSocialV2State(key);
+        if (!Array.isArray(st.pendingWakeReasons) || !st.pendingWakeReasons.length) continue;
+        const item = st.pendingWakeReasons.shift();
+        if (!item || typeof item !== 'object') continue;
+        const stillRelevant = Array.isArray(st.unread) && st.unread.some((m) => m && Number(m.seq) >= Number(item.seq));
+        if (stillRelevant) {
+          log(`[reserved2] ${key} ${reason}后补发积压唤醒：${item.reason}@seq${item.seq}`);
+          scheduleWakeV2(key, item.reason);
+        } else {
+          log(`[reserved2] ${key} ${reason}后跳过积压唤醒 ${item.reason}@seq${item.seq}（消息已被处理）`);
+        }
+      }
+      saveSocialV2State();
+    } catch (error) {
+      log(`[reserved2] 补发积压唤醒失败：${error?.message ?? error}`);
+    }
+  }
+
   function isConversationBusyV2(key, st) {
     if (st && st.pendingWakeTimer) return true;
     if (pendingWakeKeys.has(key)) return true;
     const q = promptQueues.get(key);
     if (q && (q.running || q.queue.length > 0)) return true;
     const sid = state.sessions[key];
-    if (sid && (v2TurnStartAt.has(sid) || collectors.has(sid))) return true;
+    if (sid) {
+      // 兜底：任何工具的超时都 < 30 分钟，超过这个时长还在"进行中"必然是僵尸标记
+      const startedAt = v2TurnStartAt.get(sid);
+      const TURN_STALE_MS = 30 * 60 * 1000;
+      if (startedAt && Date.now() - startedAt > TURN_STALE_MS) {
+        v2TurnStartAt.delete(sid);
+        collectors.delete(sid);
+        log(`[reserved2] 回合标记超时（已 ${Math.round((Date.now() - startedAt) / 60000)} 分钟），已强制清理：${sid}`);
+      } else if (startedAt || collectors.has(sid)) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -10668,7 +10740,7 @@ function startConsoleServer() {
           } catch (error) {
             if (trimmed) { try { fs.unlinkSync(trimmed); } catch {} }
             const msg = String(error?.message ?? error);
-            await sendToQQ(key, `测试片失败（只有这一条，不会自动重试）：${msg.slice(0, 160)}`);
+            await sendErrorToKey(key, `测试片失败（只有这一条，不会自动重试）：${msg.slice(0, 160)}`);
           }
           return;
         }
@@ -10745,7 +10817,7 @@ function startConsoleServer() {
             const rows = (j?.models ?? []).map((m) => `${m.name}${m.size ? `（${(m.size / 1024 / 1024 / 1024).toFixed(1)}GB）` : ''}`);
             await sendToQQ(key, rows.length ? `Ollama 可用模型：\n${rows.join('\n')}` : 'Ollama 里没有模型');
           } catch (error) {
-            await sendToQQ(key, `读取 Ollama 模型列表失败：${error?.message ?? error}`);
+            await sendErrorToKey(key, `读取 Ollama 模型列表失败：${error?.message ?? error}`);
           }
           return;
         }
@@ -10769,7 +10841,7 @@ function startConsoleServer() {
           }
           resolvedInfo = models.find((m) => m.name === resolved) ?? null;
         } catch (error) {
-          await sendToQQ(key, `切换失败：${error?.message ?? error}`);
+          await sendErrorToKey(key, `切换失败：${error?.message ?? error}`);
           return;
         }
         // 内存预检：页面文件扩到 24GB 后，"装不下"不再是绝对障碍，但超出物理内存会变成龟速。
@@ -10806,7 +10878,7 @@ function startConsoleServer() {
           writeModelMode({ mode: 'local', model: resolved });
           await sendToQQ(key, `已切到本地模型 ${resolved}（加载 ${cost}s，不消耗 token，但没有工具）${slowWarning}`);
         } catch (error) {
-          await sendToQQ(key, `切换到 ${resolved} 失败（多半是内存不够）：${error?.message ?? error}`);
+          await sendErrorToKey(key, `切换到 ${resolved} 失败（多半是内存不够）：${error?.message ?? error}`);
         }
         return;
       }
@@ -10982,7 +11054,7 @@ function startConsoleServer() {
     if (!accepted.result.ok) {
       const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
       const safeErrText = shouldAuditKey(key) && SENSITIVE_RE.test(errText) ? '（含敏感信息，已隐藏）' : errText;
-      await sendToQQ(key, `⚠️ 消息未被接受：${safeErrText}`);
+      await sendErrorToKey(key, `⚠️ 消息未被接受：${safeErrText}`);
       return;
     }
     if (accepted.result.value.command) {
@@ -11039,7 +11111,7 @@ function startConsoleServer() {
         if (pending.get(key) === p) pending.delete(key);
       } catch (error) {
         log('回答问题失败（保留挂起以便重试）:', error.message);
-        await sendToQQ(key, '⚠️ 回答提交失败，请再回复一次。');
+        await sendErrorToKey(key, '⚠️ 回答提交失败，请再回复一次。', { generic: '⚠️ 刚才没提交上，请再回复一次。' });
       }
       return;
     }
@@ -11068,7 +11140,7 @@ function startConsoleServer() {
         if (pending.get(key) === p) pending.delete(key);
       } catch (error) {
         log('处理审批失败（保留挂起以便重试）:', error.message);
-        await sendToQQ(key, '⚠️ 审批回执提交失败，请再回复一次「通过」或「拒绝」。');
+        await sendErrorToKey(key, '⚠️ 审批回执提交失败，请再回复一次「通过」或「拒绝」。', { generic: '⚠️ 刚才没提交上，请再回复一次。' });
       }
       return;
     }
@@ -11407,7 +11479,7 @@ function startConsoleServer() {
                   log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
                   appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
                   if (cfg.security?.interceptNotify !== false) {
-                    await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
+                    await sendErrorToKey(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。', { generic: '⚠️ 这条我换个说法再说。' });
                   }
                   if (isFarewell) {
                     const st = socialState(key);
@@ -11484,7 +11556,8 @@ function startConsoleServer() {
               } else if (ended.reason.kind === 'error') {
                 const msg = ended.reason.error?.message ?? '未知错误';
                 const safeMsg = shouldAuditKey(key) && SENSITIVE_RE.test(msg) ? '（含敏感信息，已隐藏）' : msg.slice(0, 500);
-                await sendToQQ(key, `⚠️ agent 处理出错：${safeMsg}`);
+                log(`[error] agent 回合出错 (${key}): ${safeMsg}`);
+                await sendErrorToKey(key, `⚠️ agent 处理出错：${safeMsg}`);
                 if (isFarewell) {
                   const st = socialState(key);
                   if (st.phase === 'exiting') {
@@ -11495,7 +11568,7 @@ function startConsoleServer() {
                   }
                 }
               } else if (ended.reason.kind === 'aborted') {
-                await sendToQQ(key, '⏹️ 已停止');
+                await sendErrorToKey(key, '⏹️ 已停止', { alwaysSend: true });
                 if (isFarewell) {
                   const st = socialState(key);
                   if (st.phase === 'exiting') {
