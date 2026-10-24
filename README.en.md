@@ -2,7 +2,10 @@
 
 > Connect QQ messages to DeepSeek Harness (DSH) agents: QQ friends/groups become DSH conversations, and agent replies (including questions and tool approvals) are sent back to QQ.
 
-> ⚠️ **Current release `v0.1.5`, targets DSH 0.1.5-rc.1** (verified item by item on that version). It uses Cookie auth, slash RPC endpoints and the `/api/remote.mux` event stream — a protocol generation introduced in DSH `0.1.2-alpha.1`, incompatible with the older dot-endpoint protocol. On **DSH `0.1.1-rc.2` or earlier**, use tag [`v0.1.0`](https://github.com/Derpyu520/qq-bridge/releases/tag/v0.1.0) instead.
+> ⚠️ **Current release `0.1.7`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
+> It relies on DSH Cookie auth, slash RPC (`/api/<namespace>/<method>`) and the `/api/remote.mux` event stream — a protocol generation introduced in DSH `0.1.2-alpha.1` and **incompatible with the older dot-endpoint protocol**.
+>
+> Differences from upstream (legacy "v1 simulation" removed, default mode `reserved2`, added voice / image / video / cover and the "generate" console page) are listed in the Chinese [来源与改动](#来源与改动) section.
 >
 > The default branch `main` **is** this version — a plain `git clone` gets it, no branch switching needed.
 
@@ -19,7 +22,7 @@ QQ messages ──► SnowLuma (OneBot v11 WS) ──► qq-bridge ──► DSH
 ```
 
 - **QQ side**: `@snowluma/sdk` provides the OneBot v11 WebSocket client.
-- **DSH side**: adapted for DSH 0.1.2+ and re-verified on 0.1.5 — launch-token Cookie auth, `/api/<namespace>/<method>` slash RPC, and `/api/remote.mux` + `session/follow` event stream. The per-session model is pinned by the bridge via `session.selectModel` from `config.json`'s `dsh.model` (default `deepseek-flash` = DeepSeek-V41-Flash, multimodal).
+- **DSH side**: adapted for DSH 0.1.2+ and re-verified on 0.1.7 — launch-token Cookie auth, `/api/<namespace>/<method>` slash RPC, and `/api/remote.mux` + `session/follow` event stream. The per-session model is pinned by the bridge via `session.selectModel` from `config.json`'s `dsh.model` (default `deepseek-flash` = DeepSeek-V41-Flash, multimodal).
 - **Agent tools**: safe MCP servers expose a restricted QQ toolset (`qq_status`, `qq_list_groups`, `qq_get_group_history`, `qq_send_group_message`, `qq_reply`, etc.) plus an admin-only host server (`snowluma_status`, and `start_snowluma`/`stop_snowluma` when `snowluma.allowProcessControl` is enabled).
 - **Console**: a local web console at `http://127.0.0.1:3100`, organised into ten task-based pages (Overview, Sessions & Approvals, Persona, Social v2, Social v1, Slang, Usage & Cost, Access & Security, Operations, Tool Reference) with cross-page feature search and a **light / dark theme** (one-click toggle in the header; follows the OS preference until you choose), for mode switching, role management, whitelist/admin settings, slang management, memory, stickers and more. The Persona page manages roles (view/edit/rename/duplicate/delete the prompt of each persona), shows and edits both prompt layers separately — the **simulation prompt** built into the preset (tool/behaviour protocol; synced to DSH, restart required) and the **persona prompt** (`roles/*.md`; applied immediately) — and sets the **DSH reasoning effort** (`max` by default, `high`/`low` selectable). The **Usage & Cost** page shows real-time token consumption and its price in CNY, broken down per group/friend and per conversation turn (see [docs/guides/TOKEN_USAGE_CONSOLE.md](docs/guides/TOKEN_USAGE_CONSOLE.md)).
 
