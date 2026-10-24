@@ -175,7 +175,7 @@ Get-Content state\bridge.log -Encoding UTF8 -Tail 40 | Select-String "error|失�
 
 #### B) 火山方舟 seedance（**已搁置，勿启用**）
   - 代码还在（`generateVideoSeedance`），但 `DEFAULT_VIDEO.seedance.enabled=false` 且 dispatcher 直接拒
-  - 原因：账号 2133336741 未开通 seedance 全系（`404 ModelNotOpen`）；用户要求先搁置
+  - 原因：账号 <火山方舟账号> 未开通 seedance 全系（`404 ModelNotOpen`）；用户要求先搁置
 
 #### 公共部分
 - 发送：OneBot `video` 段 + `file://<绝对路径>`（实测 20MB 片子 11 秒发完；base64 会撑爆内存）
