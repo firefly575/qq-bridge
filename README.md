@@ -26,7 +26,7 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
 
 ## 项目展示
 
-📽️ [AI 仿真群友 - 项目介绍视频](https://github.com/Derpyu520/qq-bridge/releases/download/v0.1.5/project-intro.mp4)（约 11 MB）
+📽️ 演示视频：本项目未附带（体积大，建议自行录屏后挂到 Release 附件）
 
 > 视频改由 **Release 附件**托管，不在仓库里——只想安装桥接的人不必再下载这 11 MB（它此前占整个仓库体积的 88%）。
 
@@ -254,6 +254,57 @@ qq-bridge/
 > node voice-cli.mjs            # 交互菜单
 > node voice-gui.mjs            # 图形界面（本地小服务 + 浏览器 UI）
 > ```
+
+## 开箱可用性（哪些功能要自己补）
+
+克隆下来、填上 API Key，**下面这些立刻能用**；带 ⚠️ 的需要额外准备（仓库里不含对应的大文件/二进制）。
+
+### ✅ 填 Key 即可用
+
+| 功能 | 需要什么 |
+|---|---|
+| QQ 文字聊天（收发、引用、@、审批转发） | SnowLuma + DSH + `config.json` 的 `ownerQQ` / `allow` |
+| 画图 `qwen` / `seedream` / `seedream-pro` | 百炼 Key 或火山方舟 Key（控制台「生成能力」页可填） |
+| 视频 `wan` / `wan-prime` | 百炼 Key；`/video test` 另需 ffmpeg |
+| 语音回复（TTS） | 百炼 Key + ffmpeg（`aliyun_tts.py` 只用标准库） |
+| 表情发送 / 收藏 / 备注 | SnowLuma（表情库初始为空，会随聊天自动积累） |
+| 词汇（黑话）注入与查询 | 无（管理员在「词汇新增」页手动录入） |
+| 人格卡 | 无（`roles/` 已带 3 个示例） |
+| 控制台 10 个页面 | 无 |
+
+### ⚠️ 需要额外准备
+
+| 功能 | 为什么不行 | 怎么补 |
+|---|---|---|
+| **翻唱 `/cover`** | `cover.py` 默认 `--engine local`，要用 `.venv-demucs/Scripts/python.exe` 和 `SEEDVC_DIR/checkpoints/DiT_seed_v2_*.pth`；仓库里两者都没有，且桥接**不传** `--engine`，所以没有云端回退 | 二选一：① 建 `.venv-demucs` 并装 demucs；② 下载 [seed-vc](https://github.com/Plachtaa/seed-vc) 的 checkpoints，设 `SEEDVC_DIR` 环境变量。参考音放 `audio/ref-voice.wav`（缺失时会用 edge-tts 自动生成一个通用音色） |
+| **说话用你的音色** | 同上，但**不会报错**：会降级成「按音高差移调」的近似音（`speak_voice.py` 有兜底） | 同翻唱 |
+| **唱歌 `sing_aliyun`** | 需要 numpy + 百炼 Key + ffmpeg | `pip install numpy`，并配好 Key |
+| **本地画图 `sdcpp`** | 代码默认路径是 `D:\Apps\sd-cpp\sd-cli.exe` + gguf 模型，仓库没有 | 在 `config.json` 里覆盖 `socialV2.draw.sdCliPath` / `modelPath`，或直接用云端后端 |
+| **语音库发音频** | `audio/` 是空目录 | 把音频丢进 `audio/`（或 `audio/voices/`），控制台语音面板即可选 |
+| `npm run voice-gui` / `voice-cli` | 指向上一级 `voice-tool/`，**不在本仓库** | 用控制台自带语音面板，或单独装 voice-tool |
+| `make-admin-doc.py` | 依赖 python-docx | `pip install python-docx` |
+| `autostart.ps1` / `watchdog.ps1` | 本机路径已改成环境变量 | 设 `QQ_EXE` / `SNOWLUMA_DIR` / `FFMPEG_BIN` |
+| 聊天历史 / 记忆 / 用量 | `state/` 是空的（刻意不带个人数据） | 自动生成，从零开始 |
+
+### Python 依赖清单
+
+只有「语音相关」的功能需要 Python，聊天/画图/视频不依赖。
+
+```powershell
+pip install numpy                    # TTS/唱歌/翻唱都会用
+pip install edge-tts gradio_client httpx   # 翻唱（云端 Seed-VC Space）+ 参考音自动生成
+pip install yt-dlp demucs            # 翻唱：URL 下载 + 人声分离
+pip install pyworld                  # 仅 sing_world.py（非默认唱歌路径）
+pip install python-docx              # 仅 make-admin-doc.py
+```
+
+### 最小可用路径（3 步）
+
+1. `npm install` + `copy config.example.json config.json`，填 `ownerQQ` / `allow`
+2. 控制台「生成能力 → API Key」填百炼 Key（画图 qwen、视频 wan、TTS 都用它）
+3. `npm start`，在 QQ 里给机器人发一条消息
+
+翻唱/唱歌等语音能力可以之后再补——不影响聊天、画图、视频。
 
 ## 已知限制
 
