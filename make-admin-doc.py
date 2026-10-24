@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""重新生成桌面上的《QQ机器人-管理员指令.docx》，内容以当前代码实际支持为准。"""
+"""生成《QQ机器人-管理员指令.docx》（默认输出到本脚本同目录），内容以当前代码实际支持为准。
+
+用法：python make-admin-doc.py [--out 路径]
+依赖：pip install python-docx
+"""
 import io
 import sys
 from datetime import datetime
@@ -11,7 +15,12 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 
-OUT = r"%USERPROFILE%\Desktop\QQ机器人-管理员指令.docx"
+import os as _os
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+# 默认输出到脚本同目录，避免依赖某个用户的桌面路径；可用 --out 覆盖
+OUT = _os.path.join(_HERE, "QQ机器人-管理员指令.docx")
+if "--out" in sys.argv:
+    OUT = sys.argv[sys.argv.index("--out") + 1]
 
 doc = Document()
 

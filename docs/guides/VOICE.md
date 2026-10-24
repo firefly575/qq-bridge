@@ -59,7 +59,7 @@ audio/ref-voice.wav   # 8~20 秒、干净人声、无背景音乐
 
 | 引擎 | 需要什么 | 怎么开 |
 |---|---|---|
-| `local`（**默认**） | ① `.venv-demucs/Scripts/python.exe`（demucs + 依赖装在这里）② 环境变量 `SEEDVC_DIR` 指向 [seed-vc](https://github.com/Plachtaa/seed-vc) 仓库，且 `checkpoints/DiT_seed_v2_uvit_whisper_base_f0_44k_...pth` 存在 | 什么都不用改，配好这两样即可 |
+| `local`（**默认**） | ① `.venv-demucs/Scripts/python.exe`（demucs + 依赖装在这里）② 环境变量 `SEEDVC_DIR` 指向 [seed-vc](https://github.com/Plachtaa/seed-vc) 仓库，且 `checkpoints/DiT_seed_v2_*.pth...pth` 存在 | 什么都不用改，配好这两样即可 |
 | `hf`（云端） | `gradio_client` + `httpx`；免费 ZeroGPU 有额度，建议配 `HF_TOKEN` | 仅命令行可用：`python cover.py --engine hf ...`（**桥接不传这个参数**） |
 
 > ⚠️ 桥接调用 `cover.py` 时**不传 `--engine`**，所以 QQ 里的 `/cover` 一定走 `local`。

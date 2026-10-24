@@ -307,6 +307,8 @@ qq-bridge/
 | 人格卡 | 无（`roles/` 已带 3 个示例） |
 | 控制台 10 个页面 | 无 |
 
+> 📋 管理员指令速查表（可打印）：**[docs/QQ机器人-管理员指令.docx](docs/QQ机器人-管理员指令.docx)**
+
 ### ⚠️ 需要额外准备
 
 | 功能 | 为什么不行 | 怎么补 |
@@ -314,7 +316,7 @@ qq-bridge/
 | **翻唱 `/cover`** | `cover.py` 默认 `--engine local`，要用 `.venv-demucs/Scripts/python.exe` 和 `SEEDVC_DIR/checkpoints/DiT_seed_v2_*.pth`；仓库里两者都没有，且桥接**不传** `--engine`，所以没有云端回退 | 二选一：① 建 `.venv-demucs` 并装 demucs；② 下载 [seed-vc](https://github.com/Plachtaa/seed-vc) 的 checkpoints，设 `SEEDVC_DIR` 环境变量。参考音放 `audio/ref-voice.wav`（缺失时会用 edge-tts 自动生成一个通用音色） |
 | **说话用你的音色** | 同上，但**不会报错**：会降级成「按音高差移调」的近似音（`speak_voice.py` 有兜底） | 同翻唱 |
 | **唱歌 `sing_aliyun`** | 需要 numpy + 百炼 Key + ffmpeg | `pip install numpy`，并配好 Key |
-| **本地画图 `sdcpp`** | 代码默认路径是 `D:\Apps\sd-cpp\sd-cli.exe` + gguf 模型，仓库没有 | 在 `config.json` 里覆盖 `socialV2.draw.sdCliPath` / `modelPath`，或直接用云端后端 |
+| **本地画图 `sdcpp`** | 代码默认路径是 `<sd-cpp目录>\sd-cli.exe` + gguf 模型，仓库没有 | 在 `config.json` 里覆盖 `socialV2.draw.sdCliPath` / `modelPath`，或直接用云端后端 |
 | **语音库发音频** | `audio/` 是空目录 | 把音频丢进 `audio/`（或 `audio/voices/`），控制台语音面板即可选 |
 | `npm run voice-gui` / `voice-cli` | 指向上一级 `voice-tool/`，**不在本仓库** | 用控制台自带语音面板，或单独装 voice-tool |
 | `make-admin-doc.py` | 依赖 python-docx | `pip install python-docx` |

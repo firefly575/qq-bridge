@@ -31,6 +31,7 @@
 | [FOLDER_MAP.md](FOLDER_MAP.md) | 目录与脚本命名约定，改代码前先看这个 |
 | [LICENSE](../LICENSE) | MIT（含上游版权声明） |
 | [config.example.json](../config.example.json) | 配置模板，复制成 `config.json` 使用 |
+| [QQ机器人-管理员指令.docx](QQ机器人-管理员指令.docx) | 管理员指令速查表（可打印；用 `python make-admin-doc.py` 重新生成） |
 
 ## 想找什么 → 去哪看
 
