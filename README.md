@@ -10,6 +10,29 @@
 >
 > 🎤 独立的「发语音」工具已拆到仓库上一级的 **`../voice-tool/`**（命令行 `voice-cli.mjs` / 图形界面 `voice-gui.mjs`），不再依赖 qq-bridge 运行。
 
+---
+
+## 来源与改动
+
+本项目基于 **[@Derpyu520](https://github.com/Derpyu520) 的 [qq-bridge](https://github.com/Derpyu520/qq-bridge)** 二次开发（MIT License，原始版权声明保留在 [LICENSE](LICENSE)）。
+上游作者把「QQ ↔ DeepSeek Harness 桥接」的基础设施做得很完整（OneBot 接入、会话路由、审批转发、MCP 工具面、控制台），这里的工作是在其之上做的取舍与扩展：
+
+| 方向 | 本仓库做的事 |
+|---|---|
+| 🎤 语音 | 接入阿里云百炼 TTS 与 Seed-VC 换嗓；支持发语音条、朗读、用你的音色说话 |
+| 🎵 翻唱 | 新增 `/cover` 与 `qq_cover` 工具：下载/裁剪歌曲 → 人声分离 → 换成目标音色 → 与伴奏混音 |
+| 🖼️ 画图 | 接入百炼 Qwen-Image 3.0 与火山方舟 Seedream 5.0（Flash / Pro）三档，可切换分辨率与每日额度 |
+| 🎬 视频 | 接入百炼 wan3.0-video / wan3.0-video-prime：让 AI 在 QQ 里出片，支持 2~30 秒、按秒计费与额度保护 |
+| 🎛️ 控制台 | 新增「生成能力」页：后端/型号/分辨率/时长/额度/**API Key** 全部可视化，密钥只显示尾号 |
+| 📚 词汇（黑话） | **把「群内自动学习黑话」改成只在管理端手动录入**：桥接不再从群聊提取词条，AI 也不能主动提交；已确认词条仍注入上下文 |
+| 🧹 其它 | 一代仿真模式下线（只保留二代 `reserved2`）、页面改名「DeepSeek娘聊天 / 词汇新增」、控制台深度重构 |
+
+> 如果你只想要最原始、最精简的版本，建议直接用上游仓库；本仓库包含较多本机化扩展（语音/画图/视频/翻唱），依赖也更多，上手前请先读 [本地部署与使用指南](docs/guides/DEPLOY.md) 和下面的「开箱可用性」。
+
+---
+
+
+
 把 QQ 消息接入 DSH agent：QQ 好友/群发来的消息会变成 DSH 会话里的用户消息，agent 的回复（含提问、工具审批）会发回 QQ。
 
 > ⚠️ **当前版本 `v0.1.5`，适配 DSH 0.1.5-rc.1**（在该版本上逐项实测）。使用 Cookie 鉴权、斜杠 RPC 和 `/api/remote.mux` 事件流；这一代协议自 DSH `0.1.2-alpha.1` 起引入，与更早的点号 endpoint 协议不兼容——**DSH `0.1.1-rc.2` 及更早**请改用 tag [`v0.1.0`](https://github.com/Derpyu520/qq-bridge/releases/tag/v0.1.0)。
@@ -126,7 +149,7 @@ node scripts/setup-dsh.mjs
 
 2. **装桥接并复制配置**
    ```bash
-   git clone https://github.com/Derpyu520/qq-bridge.git
+   git clone https://github.com/firefly575/qq-bridge-pro.git
    cd qq-bridge
    npm install
    ```
