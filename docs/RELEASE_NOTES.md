@@ -1,75 +1,59 @@
-# v0.1.9
+# v0.1.10
 
-三处稳定性修复：**视频时长放开到 30 秒**、**DSH 重启后会话不再卡死**、**报错只发给管理员**。
+**紧急修复 v0.1.9 的预设文件被写坏导致「QQ 完全不回消息」的问题。**
 
-## 1. 视频时长：3~5 秒 → **2~30 秒**
+## 出了什么事
 
-问题不在生成逻辑（代码里早就是 2~30），而在给 AI 看的工具说明写着「只允许 3~5 秒」，AI 就照着拒绝。
+v0.1.9 往 `dsh/agent-presets/qq-chat-v2/agent.cordis.yml` 里加规则时，插入位置错了 —— 规则被写进了 YAML 的**根级**（变成裸列表项），文件结构从「插件对象数组」变成「字符串数组」：
 
-| 位置 | 改动 |
-|---|---|
-| `src/mcp-snowluma-safe.js` | `qq_video` 说明：`3~5 秒` → **`2~30 秒`**，并要求「用户要 30 就传 30，别自己往下压」 |
-| `src/bridge.js` / `src/media-tools.js` | 时长区间兜底 `[3,5]` → **`[2,30]`** |
-| `public/console.html` | 工具文案同步 |
-| `make-admin-doc.py` / `docs/QQ机器人-管理员指令.docx` | 指令文档同步 |
+```yaml
+# 坏的
+- 禁止把用户的消息整段复制进参数...
+- 需要长描述时自己压成一句话...
+- id: persona        # ← 原本的第一个插件项，缩进被破坏
+```
 
-## 2. DSH 重启后 QQ 永久不回消息
+DSH 重启后重新扫描预设目录，`qq-chat-v2` 解析失败 → 从可用清单消失 → 桥接按安全策略**拒绝回退到默认 preset**（那会把本地工具暴露给 QQ 群），于是所有 QQ 消息都投递失败：
 
-**根因**：DSH 重启会把在途回合一起杀掉，但 `turn/end` 事件永远不会再到达 —— 桥接里的 `v2TurnStartAt` / `collectors` 变成僵尸标记，会话被**永久判定为「繁忙」**，新消息只进内存队列、永不投递（只有重启桥接才恢复）。
+```
+⚠️ preset "qq-chat-v2" 不在 DSH 可用清单（standard, ptc, minimal, cordis, preset-plus）中
+⛔ 群聊/仿真会话缺少 preset "qq-chat-v2"，拒绝回退到 DSH 默认 preset
+```
 
-**修法**（`src/bridge.js`）：
+## 修法
 
-- 新增 `resetStaleTurnMarkers()`：DSH **断开**与**重连**时清掉僵尸标记，并把积压的唤醒补发一次（仅当触发它的消息仍未读）；
-- `isConversationBusyV2()` 加 **30 分钟硬兜底**：任何工具超时都 < 30 分钟，超过还在「进行中」的必然是僵尸，强制清理并记日志。
+规则改到 **`prefix:` 块标量内部**（缩进 6 空格），不改动 YAML 结构；`plugins/.../qq-chat-v2.patch.yml` 由 `scripts/build-agent-preset-patches.mjs` 重新生成（它是产物，不能手改）。
 
-## 3. 报错信息只发给管理员
+新增的两条规则：
 
-以前出错时桥接会把 `⚠️ agent 处理出错：…` / `切换失败：…` / `消息未被接受：…` 等直接发给**所有人**。
+- **【报错口径（硬规则）】** 工具/接口报错（失败原因、错误码、路径、额度、供应商原文）只对管理员说明；对其他用户只说一句「这条没成，等下再试」，不复述报错、不贴 JSON。
+- **【工具参数硬规则】** 禁止把用户消息整段复制进参数（含 `【】`、换行、双引号、反斜杠）；长 prompt 自己压成一句话 ≤200 字；剧本只取「人物 + 动作 + 镜头 + 光线」。
 
-现在（`security.errorsToOwnerOnly`，默认 `true`）：
+校验（本次发布包含）：
 
-| 对象 | 收到什么 |
-|---|---|
-| 管理员（`ownerQQ` 私聊） | 完整错误文本 |
-| 其他用户 / 群 | **什么都不发**（只写 `state/bridge.log`，带 `[error]` 前缀） |
+```
+dsh/agent-presets/qq-chat-v2/agent.cordis.yml     → 数组(6) ✅
+plugins/qq-agent-presets/presets/qq-chat-v2.patch.yml → 数组(1) ✅
+两条规则都能在解析后的 prefix / patch 里找到 ✅
+```
 
-- 新增 `sendErrorToKey()` 统一出口，覆盖：agent 回合出错、消息未被接受、模型切换失败、审批/回答提交失败、测试片失败、敏感信息拦截提示
-- 「⏹️ 已停止」这类非报错状态仍然所有人可见（`alwaysSend`）
-- agent 回合错误现在也会**写进日志**，以后能查（以前只发到 QQ、日志里没有）
-- 配置：`config.json` → `security.errorsToOwnerOnly`（`false` 恢复旧行为）
-
-## 4. `tool input is invalid JSON` 整轮失败
-
-**现象**：DSH 报 `本轮运行失败 DeepSeek Messages stream: tool input is invalid JSON`。
-
-**原因**：用户贴了整段剧本（含 `【场景：…】`、引号、换行），模型把它复制进 `qq_video` 的 `prompt`，JSON 没转义 → 工具参数非法 → 本轮直接失败。
-
-**修法**：预设与人格卡加「工具参数硬规则」——
-
-- 参数里禁止整段复制用户消息（尤其含 `【】`、换行、双引号、反斜杠）
-- 长描述自己压成**一句话 ≤200 字**
-- 剧本/分镜只提取「人物 + 动作 + 镜头 + 光线」，台词与格式标记一律不要
-- 不确定的字段就省略，让默认值生效
-
-## 升级步骤
+## 升级（v0.1.9 用户必做）
 
 ```bash
 git pull
-# 改的是代码 + 预设：两样都要重启
-# 1) 重启桥接
-# 2) 重启 DSH（preset 与 MCP 工具说明在启动时注册）
+node scripts/build-agent-preset-patches.mjs   # 重新生成 patch
+node scripts/setup-dsh.mjs                    # 装回 DSH
+# 然后重启 DSH（预设是启动时扫描的）
+# 重启桥接
 ```
 
-升级后建议验证：
+验证：桥接日志里不应再出现 `preset "qq-chat-v2" 不在 DSH 可用清单`；QQ 发任意消息应正常回复。
 
-```
-/video duration 30     # 应回「时长已设为 30 秒」
-/video                 # 查看当前时长/额度/今日用量
-```
+## v0.1.9 里其余修复（仍然有效）
 
-## 费用提醒
-
-视频按秒计费，30 秒约为 4 秒的 7.5 倍价；默认时长仍是 4 秒，`maxPerDay: 5` 照旧生效，缓存命中的重复提示词不占额度。
+- **视频时长 2~30 秒**：`qq_video` 工具说明与兜底区间都放开了，`/video duration 30` 可用
+- **DSH 重启后会话卡死**：`resetStaleTurnMarkers()` + 30 分钟硬兜底，清掉僵尸回合标记并补发积压唤醒
+- **报错只发管理员**：`sendErrorToKey()`，`security.errorsToOwnerOnly`（默认 `true`），普通用户收不到报错，只在 `state/bridge.log` 留 `[error]` 记录
 
 ## 安全
 
