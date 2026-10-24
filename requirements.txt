@@ -1,0 +1,24 @@
+# Python 依赖（可选）
+#
+# 只有「语音相关」功能需要 Python；聊天、画图、视频、控制台都不依赖 Python。
+# 安装：pip install -r requirements.txt
+#
+# 说明见 docs/guides/VOICE.md 与 docs/guides/DEPLOY.md
+
+# ── 基础：TTS / 唱歌 / 翻唱都会用 ─────────────────────────
+numpy>=1.24
+
+# ── 翻唱（Seed-VC 换嗓 + 云端 Space + 参考音自动生成）──────
+edge-tts>=6.1            # 没有 audio/ref-voice.wav 时自动合成参考音
+gradio_client>=1.3       # 调用 HuggingFace 上的 Seed-VC Space
+httpx>=0.27              # gradio_client 的超时/代理控制
+
+# ── 翻唱：下载与分离 ──────────────────────────────────────
+yt-dlp>=2024.1           # 支持直接 /cover <歌曲链接>
+demucs>=4.0              # 人声/伴奏分离（建议装进 .venv-demucs）
+
+# ── 仅 sing_world.py（非默认唱歌路径）────────────────────
+pyworld>=0.3
+
+# ── 仅 make-admin-doc.py（生成管理员指令 docx）───────────
+python-docx>=1.1

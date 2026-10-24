@@ -61,7 +61,6 @@ docs/research/
 docs/qq-bridge-PUBLISH_PLAN.md
 docs/qq-bridge-SECURITY_AUDIT.md
 docs/guides/PROJECT_GUIDE.md
-docs/guides/VOICE.md
 
 # 语音库（用户个人音频素材，config.json 的 socialV2.voice.dir 指向此处）
 audio/

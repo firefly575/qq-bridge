@@ -2,7 +2,7 @@
 
 **English**: [README.en.md](README.en.md) | **中文**: [README.md](README.md)
 
-> 📘 详细内外核说明书见 **[docs/guides/PROJECT_GUIDE.md](docs/guides/PROJECT_GUIDE.md)**（架构、数据流、配置全解、调试与改进指南）。
+> 📘 从零部署看 **[docs/guides/DEPLOY.md](docs/guides/DEPLOY.md)**（安装 / 填 Key / 接 SnowLuma+DSH / 使用 / 注意事项 / 排障）；语音与翻唱看 **[docs/guides/VOICE.md](docs/guides/VOICE.md)**。
 >
 > 🗂️ 文档索引（全部文档一句话说明 + 是否仍然有效）见 **[docs/README.md](docs/README.md)**；仓库目录/脚本命名约定见 **[docs/FOLDER_MAP.md](docs/FOLDER_MAP.md)**。
 >
@@ -52,7 +52,16 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
 
 ## 项目展示
 
-📽️ 演示视频：本项目未附带（体积大，建议自行录屏后挂到 Release 附件）
+控制台（演示实例，未填 Key、无任何个人数据）：
+
+| 运行总览 | DeepSeek娘聊天 |
+|---|---|
+| ![运行总览](docs/screenshots/console-overview.png) | ![DeepSeek娘聊天](docs/screenshots/console-v2.png) |
+
+| 生成能力（画图 / 视频 / API Key） | 词汇新增 |
+|---|---|
+| ![生成能力](docs/screenshots/console-media.png) | ![词汇新增](docs/screenshots/console-vocab.png) |
+
 
 > 视频改由 **Release 附件**托管，不在仓库里——只想安装桥接的人不必再下载这 11 MB（它此前占整个仓库体积的 88%）。
 
@@ -80,7 +89,7 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
 - **运行模式**：
   - `chat`：白名单群 + 白名单私聊 → qq-chat 安全聊天
   - `closed-agent`：仅私聊 owner（config.json 的 ownerQQ，可在控制台设置）→ 完整工具（默认用 DSH 自己声明的默认 preset，即 `standard`；可在控制台「closed-agent preset」下拉改为任意 DSH preset），可在 QQ 上操控 DSH
-  - ~~`reserved`（一代仿真）~~：**已于 2026-10-23 下线**（入口、预设、配置、控制台页面与专属代码全部移除）。历史设计见 `docs/design/SOCIAL_MODE_PLAN.md`
+  - ~~`reserved`（一代仿真）~~：**已于 2026-10-23 下线**（入口、预设、配置、控制台页面与专属代码全部移除）。历史设计见[上游仓库](https://github.com/Derpyu520/qq-bridge)的 `docs/design/`
   - `reserved2`（DeepSeek娘聊天，运行 `setup-dsh.mjs` 后 DSH 默认）：文本不自动转发，AI 通过 `qq_get_unread_messages` / `qq_send_message` 等工具自主看消息、发言、等待、设置唤醒/潜水；DSH 端使用 `qq-chat-v2` preset
 - **交互增强**：
   - agent 通过 `ask_user_question` 提问时，问题会转发到 QQ，回复即自动应答
@@ -223,7 +232,7 @@ npm start          # 或双击 start.bat（守护模式：崩溃自动重启，�
 npm run test:audit
 ```
 
-reserved2 的 token 开销优化、消息水位协议、升级及回退说明见 [docs/audits/TOKEN_OPTIMIZATION.md](docs/audits/TOKEN_OPTIMIZATION.md)。专项离线回归可运行 `npm run test:token`，已包含在上面的完整回归中。
+reserved2 的 token 开销优化与消息水位协议说明，见控制台「令牌与花费」页与 [docs/guides/TOKEN_USAGE_CONSOLE.md](docs/guides/TOKEN_USAGE_CONSOLE.md)。专项离线回归可运行 `npm run test:token`，已包含在上面的完整回归中。
 
 控制台「令牌与花费」看板的账本与价目表回归（峰谷分时、幂等折叠、基线合并、压缩与容错）：
 
@@ -232,7 +241,7 @@ npm run test:tokens        # 单元测试
 npm run test:console-ui    # 离线浏览器回归（含看板渲染与逐轮下钻）
 ```
 
-本轮审查与修复明细见 [docs/audits/AUDIT_REPORT_2026-09-20.md](docs/audits/AUDIT_REPORT_2026-09-20.md)（2026-09-18 的报告已被它取代，存在 [docs/legacy/AUDIT_REPORT_2026-09-18.md](docs/legacy/AUDIT_REPORT_2026-09-18.md)）。升级后会为没有权限元数据的历史映射重建一次 QQ 会话；模式或 preset 变化也会自动重建，避免保留旧权限。旧历史仍在 DSH 中。
+本仓库未随附上游的内部分析与审计报告（`docs/audits/`、`docs/design/`、`docs/research/`），需要追溯请看[上游仓库](https://github.com/Derpyu520/qq-bridge)。
 
 验证 DSH 侧链路是否打通（会创建一个独立测试会话，不影响现有会话）：
 
@@ -251,7 +260,7 @@ qq-bridge/
   docs/
     README.md           # 文档索引（每篇一句话 + 是否仍然有效）
     FOLDER_MAP.md       # 目录结构与 scripts/ 命名约定
-    guides/             # 面向使用者/运维：PROJECT_GUIDE / DSH_SETUP / VOICE / TOKEN_USAGE_CONSOLE / CONSOLE-UI-TESTING
+    guides/             # 面向使用者/运维：DEPLOY / DSH_SETUP / VOICE / TOKEN_USAGE_CONSOLE / SECURITY_BASELINE / PRIVACY
     design/             # 设计与规划：GEN2_SIMULATION_PLAN / SOCIAL_MODE_PLAN / DSH_QQ_TOOLS_PLAN / 真人语感策略
     research/           # 调研：SnowLuma功能调研 / QQ消息免打扰 / 表情包能力 / 本地模型选型
     audits/             # 审查与优化报告（体检、控制台、token）

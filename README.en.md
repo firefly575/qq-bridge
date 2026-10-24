@@ -9,7 +9,7 @@
 >
 > The default branch `main` **is** this version — a plain `git clone` gets it, no branch switching needed.
 
-For the detailed Chinese guide, see **[docs/guides/PROJECT_GUIDE.md](docs/guides/PROJECT_GUIDE.md)**.
+For a step-by-step setup guide, see **[docs/guides/DEPLOY.md](docs/guides/DEPLOY.md)** (Chinese); for voice/cover see **[docs/guides/VOICE.md](docs/guides/VOICE.md)**.
 The documentation index (one line per doc, with "still current?" notes) is **[docs/README.md](docs/README.md)**;
 the repository/folder and script-naming conventions are in **[docs/FOLDER_MAP.md](docs/FOLDER_MAP.md)**.
 
@@ -111,7 +111,7 @@ qq-bridge/
   docs/
     README.md           # documentation index (one line per doc + "still current?" notes)
     FOLDER_MAP.md       # folder layout and scripts/ naming conventions
-    guides/             # user/operator facing: PROJECT_GUIDE, DSH_SETUP, VOICE, TOKEN_USAGE_CONSOLE, CONSOLE-UI-TESTING
+    guides/             # user/operator facing: DEPLOY, DSH_SETUP, VOICE, TOKEN_USAGE_CONSOLE, SECURITY_BASELINE, PRIVACY
     design/             # design & planning docs
     research/           # investigation notes
     audits/             # review / optimisation reports
@@ -133,7 +133,7 @@ lives in the sibling folder **`../voice-tool/`** — it only needs SnowLuma, and
 
 ## Testing
 
-`npm run test:audit` runs isolated regression tests without production credentials, DSH, or QQ messages. The detailed audit is in [docs/audits/AUDIT_REPORT_2026-09-20.md](docs/audits/AUDIT_REPORT_2026-09-20.md) (Chinese); the 2026-09-18 one it superseded is archived in [docs/legacy/](docs/legacy/).
+`npm run test:audit` runs isolated regression tests without production credentials, DSH, or QQ messages. Internal audit/design/research docs are not shipped in this fork — see the [upstream repo](https://github.com/Derpyu520/qq-bridge) if you need them.
 
 After upgrading, legacy QQ session mappings without permission metadata are recreated once. Mode or preset changes also retire the old mapping and recreate the session on the next message; DSH history is retained.
 
