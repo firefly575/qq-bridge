@@ -443,9 +443,9 @@ export async function generateVideo(prompt, { dir, cfg = {} } = {}) {
     : String(wanModels.wan || c.model || 'wan3.0-video');
   ensureDir(dir);
 
-  // 时长：正常 2~30 秒（由配置/控制台决定）；测试模式**生成 2 秒**（接口下限）→ 发送前再剪成 0.5 秒
+  // 时长：正常 2~30 秒（由配置/控制台决定，最长 30）；测试模式**生成 2 秒**（接口下限）→ 发送前再剪成 0.5 秒
   const isTest = c.testMode === true && c.test?.enabled !== false;
-  const [rangeMin, rangeMax] = Array.isArray(c.durationRange) ? c.durationRange : [3, 5];
+  const [rangeMin, rangeMax] = Array.isArray(c.durationRange) ? c.durationRange : [2, 30];
   const rawDuration = Number(c.duration);
   const duration = isTest
     ? Math.max(2, Math.min(30, Number(c.test?.duration) || 2))

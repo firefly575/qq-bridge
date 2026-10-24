@@ -1,36 +1,49 @@
-# v0.1.7
+# v0.1.8
 
-基于 [@Derpyu520](https://github.com/Derpyu520) 的 [qq-bridge](https://github.com/Derpyu520/qq-bridge) 二次开发：把 QQ 接入 DeepSeek Harness（DSH），并补齐语音、翻唱、画图、视频四个生成能力。
+修复「视频生成时长被卡在 3~5 秒」的问题 —— 现在**支持 2~30 秒**，30 秒可以正常生成。
 
-## 相比上游新增
+## 修复内容
 
-- 🎤 **语音**：百炼 TTS 朗读 / 发语音条；Seed-VC 换嗓（说话用你的音色）；语音库与限流
-- 🎵 **翻唱**：`/cover`、`qq_cover` —— 下载/裁剪 → 人声分离 → 换音色 → 与伴奏混音
-- 🖼️ **画图**：百炼 Qwen-Image 3.0 + 火山方舟 Seedream 5.0（Flash / Pro），可切分辨率与每日额度
-- 🎬 **视频**：百炼 wan3.0-video / wan3.0-video-prime，2~30 秒可调、按秒计费、每日额度、缓存命中不计费
-- 🎛️ **控制台**：新增「生成能力」页 —— 后端 / 型号 / 分辨率 / 时长 / 额度 / **API Key** 全部可视化，密钥只显示尾号，可一键免费测试
-- 📚 **词汇（原「黑话」）**：**取消群内自动学习**，改为只在管理端手动录入；已确认词条仍注入上下文
-- 🧹 **精简**：一代仿真（`reserved`）整体下线，只保留二代 `reserved2`；控制台页面改名「DeepSeek娘聊天 / 词汇新增」
+问题不在生成逻辑（代码里早就是 2~30），而在**给 AI 看的工具说明**：`qq_video` 的描述里写着「时长只允许 3~5 秒」，导致 AI 自己把用户要的 30 秒压回去、甚至直接拒绝。
 
-## 安装
+| 位置 | 改动 |
+|---|---|
+| `src/mcp-snowluma-safe.js` | `qq_video` 工具说明：`3~5 秒` → **`2~30 秒`**，并明确「用户要 30 就传 30，别自己往下压」 |
+| `src/bridge.js` | 时长区间兜底 `[3,5]` → **`[2,30]`**；`durMin`/`durMax` 兜底 3/5 → 2/30 |
+| `src/media-tools.js` | 同样兜底 `[3,5]` → **`[2,30]`** |
+| `public/console.html` | 工具列表文案 `时长 3~5 秒` → **`时长 2~30 秒`** |
+| `make-admin-doc.py` | 指令文档 4 处 3~5 → 2~30；新增 `--out` 参数 |
+| `HANDOFF.md` | 6 处 3~5 → 2~30 |
+| `docs/QQ机器人-管理员指令.docx` | 用新脚本重新生成 |
 
-```bash
-git clone https://github.com/firefly575/qq-bridge-pro.git
-cd qq-bridge-pro
-npm install
-cp config.example.json config.json    # Windows: copy
-# 填 ownerQQ / allow.private / allow.groups / snowluma / dsh
-npm start
+## 怎么用
+
+QQ 里直接设：
+
+```
+/video duration 30      # 时长设为 30 秒（2~30 都能设，超出的会被夹到边界）
+/video                  # 查看当前时长、额度、今日用量
+/video limit 5          # 每日条数上限
+/video test             # 生成 1 条 0.5 秒测试片（唯一短时长入口）
 ```
 
-Python 可选依赖（只有语音相关功能需要）：`pip install -r requirements.txt`
+控制台「生成能力 → 视频」里的「时长」输入框同样支持 2~30 秒。
 
-## 文档
+## 费用提醒
 
-- **从零部署**：[docs/guides/DEPLOY.md](https://github.com/firefly575/qq-bridge-pro/blob/main/docs/guides/DEPLOY.md)
-- **语音与翻唱**：[docs/guides/VOICE.md](https://github.com/firefly575/qq-bridge-pro/blob/main/docs/guides/VOICE.md)
-- **哪些功能要自己补**：README 的「开箱可用性」章节
-- **文档索引**：[docs/README.md](https://github.com/firefly575/qq-bridge-pro/blob/main/docs/README.md)
+视频**按秒计费**，30 秒约为 4 秒的 7.5 倍价。默认时长仍是 4 秒，`maxPerDay: 5` 的每日上限照旧生效；
+命中缓存的重复提示词不占额度。
+
+## 安装 / 升级
+
+```bash
+git pull
+npm install          # 依赖没变，一般可跳过
+# 重启桥接（改的是代码）
+# 重启 DSH —— 工具说明是 MCP 启动时注册的，不重启 AI 可能还按旧规则理解
+```
+
+Python 可选依赖见 `requirements.txt`；语音相关功能说明见 [docs/guides/VOICE.md](docs/guides/VOICE.md)，完整部署见 [docs/guides/DEPLOY.md](docs/guides/DEPLOY.md)。
 
 ## 已知缺件（仓库不含，需自行准备）
 

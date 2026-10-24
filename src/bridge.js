@@ -1597,13 +1597,13 @@ async function main() {
     const base = { ...DEFAULT_VIDEO, ...v };
     const rawMax = s.maxPerDay ?? base.maxPerDay;
     const maxPerDay = Number.isFinite(Number(rawMax)) ? Math.max(0, Math.floor(Number(rawMax))) : 5;
-    // 时长范围来自配置（默认 3~5 秒，控制台可改）；绝对边界是百炼接口的 2~30 秒，
+    // 时长范围来自配置（默认 2~30 秒，控制台可改）；绝对边界是百炼接口的 2~30 秒，
     // 测试模式另有 2 秒→剪短到 0.5 秒的特殊路径，见 generateVideo。
     const API_DURATION_MIN = 2;
     const API_DURATION_MAX = 30;
-    const range = Array.isArray(base.durationRange) ? base.durationRange : [3, 5];
-    const durMin = Math.max(API_DURATION_MIN, Math.min(API_DURATION_MAX, Math.round(Number(range[0]) || 3)));
-    const durMax = Math.max(durMin, Math.min(API_DURATION_MAX, Math.round(Number(range[1]) || 5)));
+    const range = Array.isArray(base.durationRange) ? base.durationRange : [2, 30];
+    const durMin = Math.max(API_DURATION_MIN, Math.min(API_DURATION_MAX, Math.round(Number(range[0]) || 2)));
+    const durMax = Math.max(durMin, Math.min(API_DURATION_MAX, Math.round(Number(range[1]) || 30)));
     const rawDur = s.duration ?? base.duration;
     const duration = Math.max(durMin, Math.min(durMax, Number(rawDur) || 4));
     // 后端：QQ 指令写的 > config.json > 默认 wan；seedance 已搁置，残留设置一律回落到 wan
@@ -4233,7 +4233,7 @@ function startConsoleServer() {
               if (typeof v.size === 'string' && /^\d+\*\d+$/.test(v.size.trim())) patch.size = v.size.trim();
               if (v.duration !== undefined && Number.isFinite(Number(v.duration))) {
                 const _vc = videoCfg();
-                patch.duration = Math.max(_vc.durationMin ?? 2, Math.min(_vc.durationMax ?? 30, Math.round(Number(v.duration))));
+                patch.duration = Math.max(_vc.durationMin ?? 2, Math.min(_vc.durationMax ?? 30, Math.round(Number(v.duration)))); // 2~30
               }
               if (v.maxPerDay !== undefined && Number.isFinite(Number(v.maxPerDay))) patch.maxPerDay = Math.max(0, Math.min(50, Math.floor(Number(v.maxPerDay))));
               if (Object.keys(patch).length) writeVideoSettings(patch);

@@ -147,7 +147,7 @@ Get-Content state\bridge.log -Encoding UTF8 -Tail 40 | Select-String "error|失�
 
 ### 4.7 视频（生视频）
 
-**默认（2026-10-23 用户定的硬规则）：百炼 `wan3.0-video`，480P（`854*480`），4 秒（只允许 3~5 秒）。**
+**默认（2026-10-23 用户定的硬规则）：百炼 `wan3.0-video`，480P（`854*480`），4 秒（可调 2~30 秒，最长 30）。**
 
 #### 三条铁律（别改回去）
 1. **一次请求只生成一片**：`generateVideo` 里只提交一次；提交失败**直接抛错**，
@@ -156,7 +156,7 @@ Get-Content state\bridge.log -Encoding UTF8 -Tail 40 | Select-String "error|失�
 2. **测试只走 `/video test`**：接口实测 `duration` 必须在 **[2,30]**（传 0.5 直接
    `InvalidParameter: duration must be -1 or in [2,30]`）——所以测试片是
    **生成 2 秒 → 本地 ffmpeg 剪成 0.5 秒再发**（`trimVideo()`，实测剪完 0.567 秒 / 2.8MB）。
-   正常生成夹到 **3~5 秒**；`body.test=true` → `cfg.testMode` 走 2 秒路径。
+   正常生成夹到 **2~30 秒**；`body.test=true` → `cfg.testMode` 走 2 秒路径。
 3. **seedance 已搁置**：`socialV2.video.seedance.enabled=false`；
    `provider='seedance'` 时 `generateVideo` 直接抛「已搁置」，**不发任何网络请求**；
    `/video model seedance` 也被拒（不写 settings）。
@@ -200,7 +200,7 @@ Get-Content state\bridge.log -Encoding UTF8 -Tail 40 | Select-String "error|失�
   - POST：`enabled` 写 `config.json` 的 `socialV2.draw|video.enabled`（热更新 `cfg`）；
     `provider/resolution/maxPerDay/duration/size` 写 `draw-settings.json` / `video-settings.json`
     —— **与 `/draw`、`/video` 指令共用同一份设置**，避免两份真相互相覆盖
-  - 归一化：时长夹到 3~5、上限夹到 0~200（图）/0~50（视频）、`provider` 白名单（seedance 直接忽略）
+  - 归一化：时长夹到 2~30、上限夹到 0~200（图）/0~50（视频）、`provider` 白名单（seedance 直接忽略）
 - 工具开关区新增 `data-v2-tool="draw"` / `"video"` 两个勾（对应 `socialV2.tools.draw|video`）
 - （发布版已移除截图：里面含本机昵称/群名/密钥尾号）
 - 验证：接口 27 条断言（含越界夹取、seedance 被拒、页面元素存在）+ 真浏览器里点一次「保存」→ `✅ 已保存`
@@ -418,7 +418,7 @@ start "" "http://127.0.0.1:3100/?token=<state/console-token 的内容>"
 | `/draw limit 20` | 改每日出图上限（0 = 当天不再生成新图） |
 | `/video` | 查看视频开关/后端/型号/分辨率/时长/今日用量 |
 | `/video model wan` / `wan-prime` | 切换百炼两档（seedance 已搁置，切不过去） |
-| `/video duration 4` | 改时长，**只允许 3~5 秒** |
+| `/video duration 30` | 改时长，**2~30 秒**（默认 4） |
 | `/video test` | 生成 **1 条 0.5 秒 480P** 测试片（唯一短时长入口） |
 | `/video on` / `/video off` | 开关视频生成 |
 | `/video limit 5` | 改每日视频条数上限 |
@@ -540,10 +540,10 @@ start "" "http://127.0.0.1:3100/?token=<state/console-token 的内容>"
   - 模块层：真实生成 1 条（5 秒 / 20MB / 108 秒），同 prompt 再要 → 缓存 1ms，额度拦截生效
   - 桥接层：`/api/socialV2/video` 真实生成 3 秒片子（106 秒 / 已发 QQ / messageId 回读 / 额度 1→2 / 今日 2/5）
   - 错误码：额度用完 → **429**；账号欠费 → **402** + 人话提示（都实测）
-- **视频改为「一次一片 / 480P / 3~5 秒」**（2026-10-23 用户要求，全部用桩验证，没花钱）：
+- **视频改为「一次一片 / 480P / 2~30 秒」**（2026-10-23 用户要求，全部用桩验证，没花钱）：
   - 桩 fetch 跑 **13 条断言**：只提交 1 个任务；请求 10s→夹到 5s、1s→抬到 3s；
     测试模式固定 0.5s 且只一条；**被 API 拒绝后没有第二次提交**；`provider=seedance` 不发任何请求
-  - `/video` 那段抽出来配桩跑 **12 条断言**：显示「一次只出一片/3~5 秒」、seedance 切换被拒且不写 settings、
+  - `/video` 那段抽出来配桩跑 **12 条断言**：显示「一次只出一片/2~30 秒」、seedance 切换被拒且不写 settings、
     duration 9→5 / 1→3 / 4 正常、`/video test` 只调一次生成且带 `testMode`
   - 已删除 `fallbackSizes` 自动回落（那条会在被拒时提交第二个任务）
 
