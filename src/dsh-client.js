@@ -125,8 +125,15 @@ export function mintBrowserSessionCookie(baseUrl, secret, { lifetimeMs = MINTED_
     version: COOKIE_PAYLOAD_VERSION, authority, issuedAt, expiresAt
   }), 'utf8'));
   const signature = base64url(createHmac('sha256', secret).update(body).digest());
-  const name = COOKIE_PREFIX + base64url(createHash('sha256').update(authority).digest());
-  return `${name}=v1.${body}.${signature}`;
+  const value = `v1.${body}.${signature}`;
+  // DSH 原版用「host:port」算 cookie 名；装了 dsh-purge 的补丁会把端口抹掉
+  // （见 dsh-client-connection 里 cookie-name-ignore-port 那一行）。
+  // 两种都发一遍：服务端只认它自己算出的那个名字，多余的那个会被忽略，无副作用。
+  const nameWithPort = COOKIE_PREFIX + base64url(createHash('sha256').update(authority).digest());
+  const portless = String(authority).replace(/:[0-9]+$/, '');
+  const nameNoPort = COOKIE_PREFIX + base64url(createHash('sha256').update(portless).digest());
+  if (nameNoPort === nameWithPort) return `${nameWithPort}=${value}`;
+  return `${nameWithPort}=${value}; ${nameNoPort}=${value}`;
 }
 
 /**

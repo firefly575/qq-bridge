@@ -1128,6 +1128,95 @@ if (cfg.socialV2?.voice?.enabled !== false && cfg.socialV2?.tools?.sendVoice !==
     );
   }
 
+  // ── 管理员专用：本机命令 / 文件 / 下载 / 安装（config.admin.enabled 才注册）──
+  // 桥接侧会再校验一次：必须是 ownerQQ 私聊 + 有效 agent token，非管理员调用一律 403。
+  if (cfg.admin && cfg.admin.enabled === true) {
+    const ADMIN_HINT = '【仅管理员】只有 ownerQQ 的私聊能用。用户不是管理员时会返回 403，不要重试、不要向对方解释细节。';
+
+    server.tool(
+      'qq_admin_exec',
+      `在本机执行一条命令并返回输出（Windows 走 cmd.exe）。${ADMIN_HINT} 适合：装依赖、跑脚本、查状态、启动/重启服务。危险命令（格式化、删除系统目录）先向管理员确认。`,
+      {
+        key: z.string().describe('会话 key（必须是 private:管理员QQ）'),
+        token: z.string().describe('会话令牌'),
+        command: z.string().describe('要执行的命令，例如 "npm install left-pad" 或 "dir D:\\dsh"'),
+        cwd: z.string().optional().describe('工作目录（可选，默认仓库根）'),
+        timeoutMs: z.number().optional().describe('超时毫秒（默认取 config.admin.timeoutMs）')
+      },
+      async ({ key, token, command, cwd, timeoutMs }) => {
+        try {
+          const data = await agentApi('/api/admin/exec', { method: 'POST', body: JSON.stringify({ key, token, command, cwd, timeoutMs }), headers: { 'x-agent-token': token }, timeoutMs: (Number(timeoutMs) || 120000) + 20000 });
+          return { content: [{ type: 'text', text: JSON.stringify(data).slice(0, 12000) }] };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `执行失败：${error?.message ?? error}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      'qq_admin_fs',
+      `读写/管理本机文件与目录。${ADMIN_HINT} op 取值：read（读文本，上限 4MB）、list（列目录）、stat、write（覆盖写）、append（追加）、mkdir、move、copy、remove（删文件；删目录要 recursive=true）。`,
+      {
+        key: z.string().describe('会话 key（必须是 private:管理员QQ）'),
+        token: z.string().describe('会话令牌'),
+        op: z.string().describe('read | list | stat | write | append | mkdir | move | copy | remove'),
+        path: z.string().optional().describe('目标路径（绝对路径，或相对仓库根）'),
+        content: z.string().optional().describe('op=write/append 时的内容'),
+        from: z.string().optional().describe('op=move/copy 的源路径'),
+        to: z.string().optional().describe('op=move/copy 的目标路径'),
+        recursive: z.boolean().optional().describe('op=remove 删目录时必须为 true')
+      },
+      async (args) => {
+        try {
+          const data = await agentApi('/api/admin/fs', { method: 'POST', body: JSON.stringify(args), headers: { 'x-agent-token': args.token }, timeoutMs: 60000 });
+          return { content: [{ type: 'text', text: JSON.stringify(data).slice(0, 12000) }] };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `文件操作失败：${error?.message ?? error}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      'qq_admin_download',
+      `从 http(s) 下载文件到本机指定路径（目录自动创建）。${ADMIN_HINT}`,
+      {
+        key: z.string().describe('会话 key（必须是 private:管理员QQ）'),
+        token: z.string().describe('会话令牌'),
+        url: z.string().describe('下载地址（http/https）'),
+        path: z.string().describe('保存到哪个本地路径')
+      },
+      async ({ key, token, url, path }) => {
+        try {
+          const data = await agentApi('/api/admin/download', { method: 'POST', body: JSON.stringify({ key, token, url, path }), headers: { 'x-agent-token': token }, timeoutMs: 180000 });
+          return { content: [{ type: 'text', text: JSON.stringify(data).slice(0, 4000) }] };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `下载失败：${error?.message ?? error}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      'qq_admin_install',
+      `安装依赖或 DSH 插件。${ADMIN_HINT} kind：npm（项目内依赖）、npm-global（全局）、pip（Python 包）、plugin（重跑 scripts/setup-dsh.mjs 装/刷新 DSH 插件与预设）。`,
+      {
+        key: z.string().describe('会话 key（必须是 private:管理员QQ）'),
+        token: z.string().describe('会话令牌'),
+        kind: z.string().describe('npm | npm-global | pip | plugin'),
+        spec: z.string().describe('包名或安装参数，例如 "left-pad@1.3.0"、"requests"；kind=plugin 时随便给个说明'),
+        cwd: z.string().optional().describe('工作目录（默认仓库根）'),
+        timeoutMs: z.number().optional().describe('超时毫秒')
+      },
+      async ({ key, token, kind, spec, cwd, timeoutMs }) => {
+        try {
+          const data = await agentApi('/api/admin/install', { method: 'POST', body: JSON.stringify({ key, token, kind, spec, cwd, timeoutMs }), headers: { 'x-agent-token': token }, timeoutMs: (Number(timeoutMs) || 600000) + 30000 });
+          return { content: [{ type: 'text', text: JSON.stringify(data).slice(0, 8000) }] };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `安装失败：${error?.message ?? error}` }], isError: true };
+        }
+      }
+    );
+  }
+
   if (cfg.socialV2?.cover?.enabled !== false) {
     server.tool(
       'qq_cover',

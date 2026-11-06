@@ -1,60 +1,86 @@
-# v0.1.10
+# v0.1.11
 
-**紧急修复 v0.1.9 的预设文件被写坏导致「QQ 完全不回消息」的问题。**
+四件事：**管理员可以在 QQ 里操作电脑**、修好「DSH 打补丁后桥接连不上（401）」、视频时长 2~30 秒、报错只发管理员。
 
-## 出了什么事
+## 1. 管理员工具（新功能，仅 ownerQQ）
 
-v0.1.9 往 `dsh/agent-presets/qq-chat-v2/agent.cordis.yml` 里加规则时，插入位置错了 —— 规则被写进了 YAML 的**根级**（变成裸列表项），文件结构从「插件对象数组」变成「字符串数组」：
+管理员私聊里，AI 现在能直接操作本机（`config.admin.enabled`，默认 **false**，本仓库示例配置里是 false，请按需打开）：
 
-```yaml
-# 坏的
-- 禁止把用户的消息整段复制进参数...
-- 需要长描述时自己压成一句话...
-- id: persona        # ← 原本的第一个插件项，缩进被破坏
+| 工具 | 作用 |
+|---|---|
+| `qq_admin_exec` | 执行任意命令（装依赖、跑脚本、重启服务、查状态），返回 stdout/stderr |
+| `qq_admin_fs` | 读/写/追加/列目录/stat/移动/复制/删除文件与目录 |
+| `qq_admin_download` | 从 http(s) 下载文件到本机指定路径 |
+| `qq_admin_install` | `npm` / `npm-global` / `pip` / `plugin`（重跑 `setup-dsh.mjs` 装 DSH 插件与预设） |
+
+**三重校验**，缺一不可：
+
+1. `config.admin.enabled === true`
+2. 有效令牌（会话 agent token 或控制台令牌）
+3. 会话 key 必须**正好等于** `private:<ownerQQ>` —— 群聊、其他人私聊一律 403
+
+**全程审计**：每次调用写 `state/admin-audit.jsonl`（时间、key、操作、命令/路径、结果码），可回溯。
+
+配置：
+
+```jsonc
+"admin": {
+  "enabled": true,          // 打开才会把工具注册给 AI
+  "allowShell": true,       // 关掉则只允许文件操作
+  "allowWrite": true,
+  "allowInstall": true,
+  "workdir": "",            // 相对路径的基准目录，空=仓库根
+  "timeoutMs": 120000,      // 单条命令超时
+  "maxOutputChars": 8000    // 回给 AI 的输出上限（防止把巨量日志塞进上下文）
+}
 ```
 
-DSH 重启后重新扫描预设目录，`qq-chat-v2` 解析失败 → 从可用清单消失 → 桥接按安全策略**拒绝回退到默认 preset**（那会把本地工具暴露给 QQ 群），于是所有 QQ 消息都投递失败：
+提示词里同步加了规则：只在管理员明确要求时动手、覆盖/删除前先说一句、执行后只回报要点、报错细节只对管理员说。
 
-```
-⚠️ preset "qq-chat-v2" 不在 DSH 可用清单（standard, ptc, minimal, cordis, preset-plus）中
-⛔ 群聊/仿真会话缺少 preset "qq-chat-v2"，拒绝回退到 DSH 默认 preset
-```
+## 2. 修 DSH 打补丁后「桥接 401 / 连不上事件流」
 
-## 修法
+有人用 **dsh-purge** 给 DSH 打了补丁，把会话 cookie 名改成**忽略端口**：
 
-规则改到 **`prefix:` 块标量内部**（缩进 6 空格），不改动 YAML 结构；`plugins/.../qq-chat-v2.patch.yml` 由 `scripts/build-agent-preset-patches.mjs` 重新生成（它是产物，不能手改）。
-
-新增的两条规则：
-
-- **【报错口径（硬规则）】** 工具/接口报错（失败原因、错误码、路径、额度、供应商原文）只对管理员说明；对其他用户只说一句「这条没成，等下再试」，不复述报错、不贴 JSON。
-- **【工具参数硬规则】** 禁止把用户消息整段复制进参数（含 `【】`、换行、双引号、反斜杠）；长 prompt 自己压成一句话 ≤200 字；剧本只取「人物 + 动作 + 镜头 + 光线」。
-
-校验（本次发布包含）：
-
-```
-dsh/agent-presets/qq-chat-v2/agent.cordis.yml     → 数组(6) ✅
-plugins/qq-agent-presets/presets/qq-chat-v2.patch.yml → 数组(1) ✅
-两条规则都能在解析后的 prefix / patch 里找到 ✅
+```js
+// DSH 里（被补丁改过）
+function cookieName(authority) {
+  return COOKIE_PREFIX + sha256(authority.replace(/:[0-9]+$/u, ''))
+}
 ```
 
-## 升级（v0.1.9 用户必做）
+桥接仍按 `host:port` 算 → 名字对不上 → 所有请求 401 → 事件流每 3 秒重连一次、QQ 消息全部「入队等待」。
+
+**修法**（`src/dsh-client.js`）：mint 时**同时发两个 cookie 名**（带端口 + 忽略端口），服务端只认它自己算的那个，打不打补丁都能连。
+
+## 3. 视频时长：3~5 秒 → **2~30 秒**
+
+`qq_video` 工具说明与兜底区间统一放开；`/video duration 30` 可用。默认仍是 4 秒、每日 5 条，按秒计费。
+
+## 4. 报错只发给管理员
+
+`sendErrorToKey()` 统一出口 + `security.errorsToOwnerOnly`（默认 true）：管理员私聊收完整错误，其他人**什么都不发**，只写 `state/bridge.log`（`[error]` 前缀）。agent 回合出错现在也会落日志。
+
+## 升级步骤
 
 ```bash
 git pull
-node scripts/build-agent-preset-patches.mjs   # 重新生成 patch
-node scripts/setup-dsh.mjs                    # 装回 DSH
-# 然后重启 DSH（预设是启动时扫描的）
+npm install                 # 无新依赖，可跳过
 # 重启桥接
+# 重启 DSH —— 新工具与新预设提示词在 DSH 启动时注册
+node scripts/build-agent-preset-patches.mjs   # 如果你改过预设
 ```
 
-验证：桥接日志里不应再出现 `preset "qq-chat-v2" 不在 DSH 可用清单`；QQ 发任意消息应正常回复。
+验证管理员工具是否生效（QQ 里对机器人私聊）：
 
-## v0.1.9 里其余修复（仍然有效）
+```
+帮我看下 D:\dsh\qq-bridge 目录里有什么
+把 state/bridge.log 最后 20 行读出来
+npm 装一下 xxx 这个包
+```
 
-- **视频时长 2~30 秒**：`qq_video` 工具说明与兜底区间都放开了，`/video duration 30` 可用
-- **DSH 重启后会话卡死**：`resetStaleTurnMarkers()` + 30 分钟硬兜底，清掉僵尸回合标记并补发积压唤醒
-- **报错只发管理员**：`sendErrorToKey()`，`security.errorsToOwnerOnly`（默认 `true`），普通用户收不到报错，只在 `state/bridge.log` 留 `[error]` 记录
+非管理员（群/其他人）发同样的话，AI 应直接拒绝且**不会**出现任何报错细节。
 
-## 安全
+## 安全提示
 
-仓库内不含任何 API Key、QQ 号、聊天记录、声音样本。`state/` 与 `config.json` 在 `.gitignore` 中，`npm run privacy-scan` 全绿。
+`admin.enabled: true` 等于把本机 shell 交给「能冒充 ownerQQ 私聊的人」。请确保：机器人 QQ 只加可信好友、`allow.private` 只放 owner、SSH/远程桌面不要和它同机暴露。
+`state/admin-audit.jsonl` 建议定期看一眼。

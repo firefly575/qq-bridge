@@ -249,5 +249,14 @@
             "wakeRecentLimit": 4,
             "wakeMaxChars": 6000
         }
+    },
+    "admin": {
+        "enabled": false,
+        "allowShell": true,
+        "allowWrite": true,
+        "allowInstall": true,
+        "workdir": "",
+        "timeoutMs": 120000,
+        "maxOutputChars": 8000
     }
 }

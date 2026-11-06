@@ -10,7 +10,8 @@ import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { exec as execCb, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import yaml from 'js-yaml';
 import { extractPresetPrefix, presetPromptBlockers, presetPromptWarnings, renderPresetPromptYaml } from './preset-prompt.js';
 import { GEN1_ROLE_LINE_RE, parseRoleSections, roleCharStats, roleSectionReport, selectRoleText } from './role-card.js';
@@ -686,6 +687,17 @@ function loadConfig() {
     security: {
       interceptNotify: true,
       ...(file.security ?? {})
+    },
+    // 管理员专用：本机命令/文件/下载/安装（只有 ownerQQ 私聊可用）
+    admin: {
+      enabled: false,
+      allowShell: true,
+      allowWrite: true,
+      allowInstall: true,
+      workdir: '',
+      timeoutMs: 120000,
+      maxOutputChars: 8000,
+      ...(file.admin ?? {})
     },
     slang: {
       enabled: true,
@@ -3285,6 +3297,8 @@ function startConsoleServer() {
             || url.pathname.startsWith('/api/socialV2/')
             || url.pathname.startsWith('/api/send/')
             || url.pathname.startsWith('/api/images/')
+            // 管理员面：路径放行，接口内部强制 ownerQQ 私聊 + config.admin 开关
+            || url.pathname.startsWith('/api/admin/')
             || url.pathname === '/api/authorize/read';
           if (!agentAllowed) {
             sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
@@ -5525,6 +5539,223 @@ function startConsoleServer() {
 
         // ── 语音发送（AI 通道：reserved2 + agent token，只能发自己那个会话） ────
         // ── 本地补丁：画图 / 唱歌 / AI 翻唱（AI 触发；护栏与发语音一致）──────────
+  // ── 管理员工具（仅 ownerQQ 私聊；config.admin 控制）─────────────────
+  // 用途：管理员在 QQ 里让 AI 改本机文件、跑命令、下载、装插件。
+  // 三重校验：① config.admin.enabled ② agent token ③ key 必须等于 private:<ownerQQ>
+  // 每次调用都写 state/admin-audit.jsonl（含参数摘要与结果）。
+  // 注意：某些测试 harness 只 stub 了 execFileSync，没有 exec；
+  // 这里必须惰性判断，否则每个请求都会因为 promisify(undefined) 抛错 → 全站 500。
+  const execAsync = typeof execCb === 'function' ? promisify(execCb) : null;
+
+  function adminCfg() {
+    const a = (cfg && cfg.admin) || {};
+    return {
+      enabled: a.enabled === true,
+      allowShell: a.allowShell !== false,
+      allowWrite: a.allowWrite !== false,
+      allowInstall: a.allowInstall !== false,
+      workdir: String(a.workdir || ROOT),
+      timeoutMs: Math.max(5000, Math.min(600000, Number(a.timeoutMs) || 120000)),
+      maxOutputChars: Math.max(1000, Math.min(60000, Number(a.maxOutputChars) || 8000))
+    };
+  }
+
+  function adminAudit(entry) {
+    try {
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      fs.appendFileSync(
+        path.join(STATE_DIR, 'admin-audit.jsonl'),
+        JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'
+      );
+    } catch {}
+  }
+
+  function resolveAdminPath(p0) {
+    const raw = String(p0 ?? '').trim();
+    if (!raw) throw new Error('路径为空');
+    return path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(adminCfg().workdir, raw);
+  }
+
+  function clipText(text, max) {
+    const s0 = String(text ?? '');
+    return s0.length > max ? s0.slice(0, max) + `\n…（已截断，共 ${s0.length} 字符）` : s0;
+  }
+
+  async function runAdminCommand(command, opts = {}) {
+    const c = adminCfg();
+    const cwd = opts.cwd ? resolveAdminPath(opts.cwd) : c.workdir;
+    const timeout = Math.min(c.timeoutMs, Number(opts.timeoutMs) || c.timeoutMs);
+    const t0 = Date.now();
+    if (!execAsync) return { code: 1, stdout: '', stderr: '当前环境不支持执行命令（exec 不可用）', ms: 0, cwd };
+    try {
+      const out = await execAsync(String(command), {
+        cwd,
+        timeout,
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true,
+        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
+      });
+      return { code: 0, stdout: clipText(out.stdout, c.maxOutputChars), stderr: clipText(out.stderr, c.maxOutputChars), ms: Date.now() - t0, cwd };
+    } catch (error) {
+      return {
+        code: Number.isFinite(error?.code) ? error.code : 1,
+        stdout: clipText(error?.stdout ?? '', c.maxOutputChars),
+        stderr: clipText(error?.stderr ?? error?.message ?? String(error), c.maxOutputChars),
+        ms: Date.now() - t0,
+        cwd
+      };
+    }
+  }
+
+        // ── 管理员专用：本机命令 / 文件 / 下载 / 安装（仅 ownerQQ 私聊）──────
+        if (req.method === 'POST' && url.pathname.startsWith('/api/admin/')) {
+          const body = await readBody();
+          const token = String(body.token ?? req.headers['x-agent-token'] ?? '').trim();
+          const key = String(body.key ?? '').trim();
+          const ac = adminCfg();
+          if (!ac.enabled) { sendJson({ ok: false, error: '管理员工具未启用（config.admin.enabled）' }, 403); return; }
+          const tokenOk = agentTokenOk(key, token) || (consoleToken && token === consoleToken);
+          if (!tokenOk) { sendJson({ ok: false, error: 'agent token 无效（需要会话令牌或控制台令牌）' }, 403); return; }
+          if (!isOwnerKey(key)) {
+            log(`[admin] 拒绝非管理员调用：${key} ${url.pathname}`);
+            adminAudit({ key, op: url.pathname, ok: false, error: 'not-owner' });
+            sendJson({ ok: false, error: '只有管理员（ownerQQ）私聊可以使用本机操作' }, 403);
+            return;
+          }
+          const op = url.pathname.slice('/api/admin/'.length);
+          try {
+            if (op === 'exec') {
+              if (!ac.allowShell) { sendJson({ ok: false, error: 'config.admin.allowShell=false，已禁止执行命令' }, 403); return; }
+              const cmd = String(body.command ?? '').trim();
+              if (!cmd) { sendJson({ ok: false, error: 'command 为空' }, 400); return; }
+              log(`[admin] exec: ${cmd.slice(0, 200)}`);
+              const r = await runAdminCommand(cmd, { cwd: body.cwd, timeoutMs: body.timeoutMs });
+              adminAudit({ key, op: 'exec', command: cmd.slice(0, 500), code: r.code, cwd: r.cwd });
+              sendJson({ ok: r.code === 0, ...r });
+              return;
+            }
+
+            if (op === 'fs') {
+              const fop = String(body.op ?? '').trim();
+              if (fop === 'read' || fop === 'list' || fop === 'stat') {
+                const target = resolveAdminPath(body.path);
+                if (fop === 'read') {
+                  const st = fs.statSync(target);
+                  if (st.isDirectory()) { sendJson({ ok: false, error: '这是目录，请用 op=list' }, 400); return; }
+                  if (st.size > 4 * 1024 * 1024) { sendJson({ ok: false, error: `文件太大（${Math.round(st.size / 1024)}KB），上限 4MB` }, 400); return; }
+                  const text = fs.readFileSync(target, 'utf8');
+                  adminAudit({ key, op: 'fs:read', path: target, bytes: st.size });
+                  sendJson({ ok: true, path: target, bytes: st.size, content: clipText(text, ac.maxOutputChars) });
+                  return;
+                }
+                if (fop === 'list') {
+                  const target = resolveAdminPath(body.path || '.');
+                  const entries = fs.readdirSync(target, { withFileTypes: true }).slice(0, 500).map((e) => ({
+                    name: e.name,
+                    type: e.isDirectory() ? 'dir' : (e.isSymbolicLink() ? 'link' : 'file'),
+                    size: e.isFile() ? (() => { try { return fs.statSync(path.join(target, e.name)).size; } catch { return null; } })() : null
+                  }));
+                  adminAudit({ key, op: 'fs:list', path: target, count: entries.length });
+                  sendJson({ ok: true, path: target, count: entries.length, entries });
+                  return;
+                }
+                const st = fs.statSync(target);
+                sendJson({ ok: true, path: target, size: st.size, mtime: st.mtime.toISOString(), isDir: st.isDirectory() });
+                return;
+              }
+
+              if (fop === 'write' || fop === 'append') {
+                if (!ac.allowWrite) { sendJson({ ok: false, error: 'config.admin.allowWrite=false，已禁止写文件' }, 403); return; }
+                const target = resolveAdminPath(body.path);
+                const content = String(body.content ?? '');
+                fs.mkdirSync(path.dirname(target), { recursive: true });
+                if (fop === 'append') fs.appendFileSync(target, content, 'utf8');
+                else fs.writeFileSync(target, content, 'utf8');
+                const size = fs.statSync(target).size;
+                log(`[admin] fs:${fop} ${target}（${content.length} 字符）`);
+                adminAudit({ key, op: `fs:${fop}`, path: target, chars: content.length, bytes: size });
+                sendJson({ ok: true, path: target, bytes: size });
+                return;
+              }
+
+              if (fop === 'mkdir') {
+                if (!ac.allowWrite) { sendJson({ ok: false, error: 'allowWrite=false' }, 403); return; }
+                const target = resolveAdminPath(body.path);
+                fs.mkdirSync(target, { recursive: true });
+                adminAudit({ key, op: 'fs:mkdir', path: target });
+                sendJson({ ok: true, path: target });
+                return;
+              }
+
+              if (fop === 'move' || fop === 'copy') {
+                if (!ac.allowWrite) { sendJson({ ok: false, error: 'allowWrite=false' }, 403); return; }
+                const from = resolveAdminPath(body.from);
+                const to = resolveAdminPath(body.to);
+                fs.mkdirSync(path.dirname(to), { recursive: true });
+                if (fop === 'move') fs.renameSync(from, to); else fs.copyFileSync(from, to);
+                adminAudit({ key, op: `fs:${fop}`, from, to });
+                sendJson({ ok: true, from, to });
+                return;
+              }
+
+              if (fop === 'remove') {
+                if (!ac.allowWrite) { sendJson({ ok: false, error: 'allowWrite=false' }, 403); return; }
+                const target = resolveAdminPath(body.path);
+                const recursive = body.recursive === true;
+                const st = fs.statSync(target);
+                if (st.isDirectory() && !recursive) { sendJson({ ok: false, error: '目录删除需要 recursive=true' }, 400); return; }
+                fs.rmSync(target, { recursive, force: false });
+                log(`[admin] fs:remove ${target}`);
+                adminAudit({ key, op: 'fs:remove', path: target, recursive });
+                sendJson({ ok: true, path: target, recursive });
+                return;
+              }
+
+              sendJson({ ok: false, error: `未知 op：${fop}（支持 read/list/stat/write/append/mkdir/move/copy/remove）` }, 400);
+              return;
+            }
+
+            if (op === 'download') {
+              const urlStr = String(body.url ?? '').trim();
+              if (!/^https?:\/\//i.test(urlStr)) { sendJson({ ok: false, error: 'url 必须是 http(s)' }, 400); return; }
+              const target = resolveAdminPath(body.path);
+              fs.mkdirSync(path.dirname(target), { recursive: true });
+              const resp = await fetch(urlStr, { signal: AbortSignal.timeout(Math.max(10000, ac.timeoutMs)) });
+              if (!resp.ok) { sendJson({ ok: false, error: `下载失败 HTTP ${resp.status}` }, 502); return; }
+              const buf = Buffer.from(await resp.arrayBuffer());
+              fs.writeFileSync(target, buf);
+              log(`[admin] download ${target}（${Math.round(buf.length / 1024)}KB）`);
+              adminAudit({ key, op: 'download', url: urlStr, path: target, bytes: buf.length });
+              sendJson({ ok: true, path: target, bytes: buf.length });
+              return;
+            }
+
+            if (op === 'install') {
+              if (!ac.allowInstall) { sendJson({ ok: false, error: 'config.admin.allowInstall=false，已禁止安装' }, 403); return; }
+              const kind = String(body.kind ?? '').trim().toLowerCase();
+              const spec = String(body.spec ?? '').trim();
+              if (!spec) { sendJson({ ok: false, error: 'spec 为空（要装的包名/路径）' }, 400); return; }
+              let command = '';
+              if (kind === 'npm') command = `npm install ${spec}`;
+              else if (kind === 'npm-global') command = `npm install -g ${spec}`;
+              else if (kind === 'pip') command = `python -m pip install ${spec}`;
+              else if (kind === 'plugin') command = `node scripts/setup-dsh.mjs`;
+              else { sendJson({ ok: false, error: 'kind 只支持 npm / npm-global / pip / plugin' }, 400); return; }
+              log(`[admin] install(${kind}): ${command}`);
+              const r = await runAdminCommand(command, { cwd: body.cwd, timeoutMs: body.timeoutMs });
+              adminAudit({ key, op: 'install', kind, spec, command, code: r.code });
+              sendJson({ ok: r.code === 0, command, ...r });
+              return;
+            }
+
+            sendJson({ ok: false, error: `未知管理员接口：${op}（支持 exec/fs/download/install）` }, 404);
+          } catch (error) {
+            adminAudit({ key, op, ok: false, error: String(error?.message ?? error) });
+            sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
+          }
+          return;
+        }
+
         if (req.method === 'POST' && (url.pathname === '/api/socialV2/draw' || url.pathname === '/api/socialV2/sing' || url.pathname === '/api/socialV2/cover' || url.pathname === '/api/socialV2/video')) {
           const body = await readBody();
           const token = String(body.token ?? req.headers['x-agent-token'] ?? '').trim();
