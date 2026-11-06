@@ -5581,26 +5581,62 @@ function startConsoleServer() {
     return s0.length > max ? s0.slice(0, max) + `\n…（已截断，共 ${s0.length} 字符）` : s0;
   }
 
-  async function runAdminCommand(command, opts = {}) {
+  // Windows 的 cmd / 某些老工具会输出 GBK(936) 字节；直接按 UTF-8 解就变成「锟斤拷」。
+  // 这里先抓原始 Buffer：能严格按 UTF-8 解就用 UTF-8，否则回退 GBK（Node 自带 full-icu）。
+  function decodeCommandOutput(buf) {
+    if (!buf || buf.length === 0) return '';
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch {}
+    for (const enc of ['gbk', 'gb18030', 'big5', 'utf-16le']) {
+      try {
+        const decoded = new TextDecoder(enc).decode(buf);
+        if (decoded && !decoded.includes('\uFFFD')) return decoded;
+      } catch {}
+    }
+    return Buffer.from(buf).toString('utf8');
+  }
+
+    async function runAdminCommand(command, opts = {}) {
     const c = adminCfg();
     const cwd = opts.cwd ? resolveAdminPath(opts.cwd) : c.workdir;
     const timeout = Math.min(c.timeoutMs, Number(opts.timeoutMs) || c.timeoutMs);
     const t0 = Date.now();
     if (!execAsync) return { code: 1, stdout: '', stderr: '当前环境不支持执行命令（exec 不可用）', ms: 0, cwd };
+    // Windows 的 cmd.exe 默认代码页是 936(GBK)，中文文件名/内容按 UTF-8 解码就会乱码。
+    // 这里先切到 65001(UTF-8)，并通过 chcp 让子进程输出也用 UTF-8；同时把编码交给 Node 按 utf8 解。
+    const isWin = process.platform === 'win32';
+    const rawCmd = String(command);
+    const finalCmd = isWin ? `chcp 65001>nul & ${rawCmd}` : rawCmd;
+    const execOpts = {
+      cwd,
+      timeout,
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true,
+      shell: isWin ? 'cmd.exe' : '/bin/sh',
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        // 让 Python / Node 子进程也走 UTF-8，避免它们各自按 GBK 输出
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1',
+        ...(isWin ? { CHCP: '65001' } : {})
+      }
+    };
     try {
-      const out = await execAsync(String(command), {
-        cwd,
-        timeout,
-        maxBuffer: 16 * 1024 * 1024,
-        windowsHide: true,
-        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
-      });
-      return { code: 0, stdout: clipText(out.stdout, c.maxOutputChars), stderr: clipText(out.stderr, c.maxOutputChars), ms: Date.now() - t0, cwd };
+      const out = await execAsync(finalCmd, { ...execOpts, encoding: 'buffer' });
+      return {
+        code: 0,
+        stdout: clipText(decodeCommandOutput(out.stdout), c.maxOutputChars),
+        stderr: clipText(decodeCommandOutput(out.stderr), c.maxOutputChars),
+        ms: Date.now() - t0,
+        cwd
+      };
     } catch (error) {
       return {
         code: Number.isFinite(error?.code) ? error.code : 1,
-        stdout: clipText(error?.stdout ?? '', c.maxOutputChars),
-        stderr: clipText(error?.stderr ?? error?.message ?? String(error), c.maxOutputChars),
+        stdout: clipText(decodeCommandOutput(error?.stdout), c.maxOutputChars),
+        stderr: clipText(decodeCommandOutput(error?.stderr) || String(error?.message ?? error), c.maxOutputChars),
         ms: Date.now() - t0,
         cwd
       };
@@ -10190,6 +10226,18 @@ function startConsoleServer() {
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
+    // 管理员会话：直接把「你可以操作本机」写进每轮提示，避免依赖预设文案是否已重载。
+    const adminLine = (() => {
+      // 注意：这里不能调 adminCfg()——它定义在 HTTP 请求处理器内层作用域，
+      // 唤醒提示构建在外面，会抛 "adminCfg is not defined" 导致所有唤醒失败。
+      const a = (cfg && cfg.admin) || {};
+      if (a.enabled !== true || !isOwnerKey(key)) return '';
+      return '【管理员会话·本机权限】对方是管理员（ownerQQ）本人，这是私聊。你现在**可以并且应该**用这些工具操作这台电脑：'
+        + 'qq_admin_exec（执行命令）、qq_admin_fs（读/写/列目录/移动/删除文件，含 D:\\dsh 与 ~/.dsh 下的配置）、'
+        + 'qq_admin_download（下载文件）、qq_admin_install（npm/pip/DSH 插件）。'
+        + '管理员让你「看看/改改/装一下/跑一下」时，直接调用对应工具，不要回答「看不到」或「没有权限」；'
+        + '只有这个会话有权限，群聊和其他人私聊没有。危险操作（覆盖/删除/重启服务）先一句话说明再执行，执行后只回报要点。\n\n';
+    })();
     const memoryText = formatMemoryV2(st);
     const memoryLine = memoryText ? `${memoryText}\n\n` : '';
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
@@ -10227,7 +10275,7 @@ function startConsoleServer() {
     if (wcTr.anyMessage) wcTriggers.push('任意消息');
     if (Number(wcTr.probability) > 0) wcTriggers.push(`概率${wcTr.probability}`);
     const wakeLine = `【当前唤醒】${wcMode}，${wcTime}${wcTriggers.length ? `；触发：${wcTriggers.join('/')}` : ''}\n\n`;
-    const base = roleLine + tokenLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine;
+    const base = roleLine + tokenLine + adminLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是DeepSeek娘聊天模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看角色、推荐值、可用工具和状态；有待回应的消息先按首回复节奏处理，最后才用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }

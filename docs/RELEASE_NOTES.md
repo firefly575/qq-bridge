@@ -1,31 +1,41 @@
-# v0.1.12
+# v0.1.13
 
-修一个**逻辑冲突**：v0.1.11 加了管理员本机工具，但预设里「你没有本地工具」这条最高优先级安全规则没改，
-AI 严格照它执行 → 管理员让它看目录，它只会回答「看不到」。
+两个 bug 修复，都跟「AI 操作电脑」有关：**中文文件名/内容乱码**、**管理员会话完全不回消息**。
 
-## 改了什么
+## 1. 中文乱码（cmd 代码页）
 
-预设安全规则第 1 条改成「原文 + 明确例外」：
+**现象**：让机器人读带中文名的目录/文件，返回「锟斤拷」式的乱码。
 
-```
-1. 你没有本地工具：不能执行命令、不能读写文件、不能启动程序、不能查看系统信息。工具不存在就是不存在。
-   **唯一的例外**：当且仅当本次会话是管理员（ownerQQ）私聊时，桥接会额外挂上
-   qq_admin_exec / qq_admin_fs / qq_admin_download / qq_admin_install 四个工具……
-   群聊与非管理员私聊里这些工具不存在，调用会被 403 拒绝——不要尝试、不要提及、不要解释。
-```
+**原因**：`qq_admin_exec` 走 `cmd.exe`，默认代码页是 **936(GBK)**；Node 拿到字节后按 UTF-8 解码 → 中文全变替换字符。
 
-注意保留了 `你没有本地工具` 原文：`src/preset-prompt.js` 的硬性安全不变量校验要求它必须存在，
-改了会让控制台存不进提示词、`npm run test:audit` 失败（v0.1.12 已校验 `presetPromptBlockers` 返回空）。
+**修法**（`src/bridge.js` → `runAdminCommand`）：
 
-## 只有管理员能动电脑：三道闸
-
-| 层 | 位置 | 非管理员结果 |
-|---|---|---|
-| ① 工具注册 | `config.admin.enabled` | 不注册 `qq_admin_*`，AI 根本看不到 |
-| ② 路径白名单 | `/api/admin/` 在 agent 允许路径内，但接口内部判身份 | — |
-| ③ 身份 + 令牌 | `isOwnerKey(key)` + agent/console token | **403 只有管理员（ownerQQ）私聊可以使用本机操作** |
+1. 命令前加 `chcp 65001>nul &`，让 cmd 尽量输出 UTF-8；
+2. 仍然**抓原始 Buffer**，用 `TextDecoder('utf-8',{fatal:true})` 严格解码，失败再依次回退 `gbk → gb18030 → big5 → utf-16le`；
+3. 子进程环境注入 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`，Python 脚本也不会再输出 GBK。
 
 实测：
+
+```
+exec dir  → "测试文件-中文名.txt"                     ✅
+exec type → "中文内容 abc 123 / 第二行：汉字显示测试"   ✅
+fs list   → ["测试文件-中文名.txt"]                   ✅
+fs read   → 中文内容完整                              ✅
+```
+
+## 2. 管理员会话一句话都不回（回归）
+
+**现象**：v0.1.12 之后，给机器人发消息完全没有回复，日志里：
+
+```
+[reserved2] 计划唤醒异常 private:xxxx: adminCfg is not defined
+```
+
+**原因**：新增的「管理员会话·本机权限」提示里调用了 `adminCfg()`，但那个函数定义在 **HTTP 请求处理器的内层作用域**，而唤醒提示构建在外层 —— 取不到就抛异常，每轮唤醒直接失败。
+
+**修法**：唤醒提示里不再依赖 `adminCfg()`，直接读 `cfg.admin` 判断 `enabled`。
+
+## 3. 附带：管理员权限仍只对 ownerQQ 生效
 
 ```
 群会话调用      → 403 只有管理员（ownerQQ）私聊可以使用本机操作
@@ -34,14 +44,16 @@ AI 严格照它执行 → 管理员让它看目录，它只会回答「看不到
 管理员 exec     → 200  code=0
 ```
 
-每次调用写 `state/admin-audit.jsonl`（时间 / key / 操作 / 路径或命令 / 结果码）。
+审计：`state/admin-audit.jsonl`。
 
 ## 升级
 
 ```bash
 git pull
-node scripts/build-agent-preset-patches.mjs
-# 重启 DSH（预设文案在启动时装载）→ 再重启桥接
+# 重启桥接（改的是代码）
+node scripts/build-agent-preset-patches.mjs   # 预设若有改动再跑
+# 重启 DSH（MCP 工具与预设提示在启动时注册）
 ```
 
-验证：QQ 里对机器人私聊「看下 D:\\dsh\\qq-bridge 目录里有什么」→ 应调 `qq_admin_fs` 返回文件列表，而不是「看不到」。
+**升级后建议重置一次会话**：控制台「会话与审批 → 重置」，或让小号发 `/reset`，
+否则旧会话仍带着旧提示词（会出现「工具在但 AI 不用」的假象）。
