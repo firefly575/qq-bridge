@@ -1,59 +1,77 @@
-# v0.1.13
+# v0.1.14
 
-两个 bug 修复，都跟「AI 操作电脑」有关：**中文文件名/内容乱码**、**管理员会话完全不回消息**。
+新增**按会话的用户权限**：控制台「访问与安全」页可以对每个私聊/群单独勾选能力，支持批量修改，保存立即生效。
 
-## 1. 中文乱码（cmd 代码页）
+## 权限项
 
-**现象**：让机器人读带中文名的目录/文件，返回「锟斤拷」式的乱码。
+| 能力 | key | 关掉之后 |
+|---|---|---|
+| 聊天 | `chat` | 消息**直接忽略**，不入未读、不唤醒（连提示都不产生） |
+| 图片生成 | `draw` | `qq_draw` 返回 403「未被授权使用图片生成」 |
+| 视频生成 | `video` | `qq_video` 返回 403 |
+| 翻唱 | `cover` | `qq_cover` 返回 403 |
+| 语音回答 | `voice` | `qq_send_voice` 返回 403 |
+| 表情包 | `sticker` | `qq_send_sticker` 返回 403 |
 
-**原因**：`qq_admin_exec` 走 `cmd.exe`，默认代码页是 **936(GBK)**；Node 拿到字节后按 UTF-8 解码 → 中文全变替换字符。
+管理员（`ownerQQ`）**恒为全开**，表格里那一行是灰的，改不了 —— 避免把自己锁死。
 
-**修法**（`src/bridge.js` → `runAdminCommand`）：
+## 控制台怎么用
 
-1. 命令前加 `chcp 65001>nul &`，让 cmd 尽量输出 UTF-8；
-2. 仍然**抓原始 Buffer**，用 `TextDecoder('utf-8',{fatal:true})` 严格解码，失败再依次回退 `gbk → gb18030 → big5 → utf-16le`；
-3. 子进程环境注入 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`，Python 脚本也不会再输出 GBK。
+「访问与安全」→ 最下面新增卡片 **用户权限（按会话勾选 · 可批量）**：
 
-实测：
+1. 每行一个会话（私聊/群），右边 6 个勾选框；
+2. 左列勾选要做批量的行 → 点 **全开 / 全关 / 仅聊天 / 仅生成能力**；
+3. 点 **保存权限**，立即生效（写 `state/permissions.json`）。
 
-```
-exec dir  → "测试文件-中文名.txt"                     ✅
-exec type → "中文内容 abc 123 / 第二行：汉字显示测试"   ✅
-fs list   → ["测试文件-中文名.txt"]                   ✅
-fs read   → 中文内容完整                              ✅
-```
+页面顶部还有「全选行 / 全不选行」，一次性处理所有会话。
 
-## 2. 管理员会话一句话都不回（回归）
+## 存放位置与默认值
 
-**现象**：v0.1.12 之后，给机器人发消息完全没有回复，日志里：
-
-```
-[reserved2] 计划唤醒异常 private:xxxx: adminCfg is not defined
-```
-
-**原因**：新增的「管理员会话·本机权限」提示里调用了 `adminCfg()`，但那个函数定义在 **HTTP 请求处理器的内层作用域**，而唤醒提示构建在外层 —— 取不到就抛异常，每轮唤醒直接失败。
-
-**修法**：唤醒提示里不再依赖 `adminCfg()`，直接读 `cfg.admin` 判断 `enabled`。
-
-## 3. 附带：管理员权限仍只对 ownerQQ 生效
-
-```
-群会话调用      → 403 只有管理员（ownerQQ）私聊可以使用本机操作
-其他私聊调用    → 403 只有管理员（ownerQQ）私聊可以使用本机操作
-无令牌          → 403 agent token 无效
-管理员 exec     → 200  code=0
+```json
+// state/permissions.json
+{
+  "defaults": { "chat": true, "draw": true, "video": true, "cover": true, "voice": true, "sticker": true },
+  "users": { "private:123456": { "draw": false, "video": false } }
+}
 ```
 
-审计：`state/admin-audit.jsonl`。
+- **没有单独设置过的会话 = 全开**（默认值就是全开，保持向后兼容）
+- 只存「与默认不同」的项，文件保持干净
+- 想让所有新会话默认不能生成图，把 `defaults.draw` 改 `false` 即可（也可以在 API 里传 `defaults`）
+
+## API（供脚本/自动化）
+
+```bash
+# 读
+curl -H "x-console-token: $TOKEN" http://127.0.0.1:3100/api/permissions
+
+# 批量写（只传要改的项）
+curl -X POST http://127.0.0.1:3100/api/permissions \
+  -H "x-console-token: $TOKEN" -H 'content-type: application/json' \
+  -d '{"users":{"private:123456":{"draw":false,"video":false},"group:987654":{"chat":true}}}'
+
+# 恢复某会话到默认
+curl -X POST http://127.0.0.1:3100/api/permissions \
+  -H "x-console-token: $TOKEN" -H 'content-type: application/json' \
+  -d '{"reset":["private:123456"]}'
+```
+
+该接口**仅控制台可用**：带 `x-agent-token` 的 AI 调用会被白名单挡住（AI 不能给自己提权）。
+
+## 与「管理员本机工具」的关系
+
+两者独立：
+
+- **用户权限**决定「这个会话能用哪些聊天/生成能力」；
+- **管理员工具**（`qq_admin_*`）只认 `private:<ownerQQ>`，其他会话一律 403。
+
+所以把某个好友的 `chat` 打开、生成能力也打开，它依然**动不了电脑**。
 
 ## 升级
 
 ```bash
 git pull
-# 重启桥接（改的是代码）
-node scripts/build-agent-preset-patches.mjs   # 预设若有改动再跑
-# 重启 DSH（MCP 工具与预设提示在启动时注册）
+# 重启桥接（后端与页面都改了）
 ```
 
-**升级后建议重置一次会话**：控制台「会话与审批 → 重置」，或让小号发 `/reset`，
-否则旧会话仍带着旧提示词（会出现「工具在但 AI 不用」的假象）。
+升级后打开控制台「访问与安全」，页面底部即可看到新的权限表。

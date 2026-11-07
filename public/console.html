@@ -2343,6 +2343,28 @@ button:active:not(:disabled) {
         <span class="meta">保存后立即生效并写入 config.json</span>
       </div>
     </section>
+
+    <div class="card span-all" data-page="access">
+      <h2>用户权限（按会话勾选 · 可批量）</h2>
+      <div class="meta" style="margin-bottom:10px">
+        给每个私聊/群单独开关能力：<b>聊天</b>（关掉后消息直接忽略）、<b>图片生成</b>、<b>视频生成</b>、<b>翻唱</b>、<b>语音回答</b>、<b>表情包</b>。
+        管理员（ownerQQ）恒为全开，不可修改。改动保存到 <code>state/permissions.json</code>，立即生效。
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <button id="permSelectAll" class="ghost">全选行</button>
+        <button id="permSelectNone" class="ghost">全不选行</button>
+        <span class="meta">批量作用于勾选行：</span>
+        <button data-perm-batch="all" class="ghost">全开</button>
+        <button data-perm-batch="none" class="ghost">全关</button>
+        <button data-perm-batch="chat" class="ghost">仅聊天</button>
+        <button data-perm-batch="gen" class="ghost">仅生成能力</button>
+        <button id="permSave">保存权限</button>
+        <span id="permStatus" class="meta"></span>
+      </div>
+      <div id="permTableWrap" style="margin-top:12px;overflow:auto">
+        <div class="meta">加载中…</div>
+      </div>
+    </div>
 <section id="section-silent" data-page="overview" class="card">
       <h2>静默开关</h2>
       <div class="row">
@@ -4179,6 +4201,157 @@ function showConsoleToast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 4200);
 }
+// ── 用户权限表（访问与安全页）────────────────────────────────
+let permModel = { caps: [], labels: {}, defaults: {}, users: [] };
+
+async function loadPermissions() {
+  const wrap = document.getElementById('permTableWrap');
+  if (!wrap) return;
+  try {
+    const data = await api('/api/permissions', 'GET');
+    permModel = data;
+    renderPermTable();
+  } catch (error) {
+    wrap.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'meta';
+    div.textContent = '加载权限失败：' + (error?.message ?? error);
+    wrap.appendChild(div);
+  }
+}
+
+function renderPermTable() {
+  const wrap = document.getElementById('permTableWrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const { caps, labels, users } = permModel;
+  if (!users.length) {
+    const empty = document.createElement('div');
+    empty.className = 'meta';
+    empty.textContent = '还没有任何会话：先在上面「允许的私聊/群号」里加人，保存后这里就会出现。';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.style.width = '100%';
+  table.style.borderCollapse = 'collapse';
+
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  const thSel = document.createElement('th');
+  thSel.textContent = '选择';
+  thSel.style.cssText = 'text-align:left;padding:6px 8px;width:56px';
+  hr.appendChild(thSel);
+  const thUser = document.createElement('th');
+  thUser.textContent = '会话';
+  thUser.style.cssText = 'text-align:left;padding:6px 8px';
+  hr.appendChild(thUser);
+  for (const cap of caps) {
+    const th = document.createElement('th');
+    th.textContent = labels[cap] ?? cap;
+    th.style.cssText = 'padding:6px 8px;white-space:nowrap';
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const user of users) {
+    const tr = document.createElement('tr');
+    tr.dataset.key = user.key;
+    tr.style.borderTop = '1px solid rgba(0,0,0,.06)';
+
+    const tdSel = document.createElement('td');
+    tdSel.style.cssText = 'padding:6px 8px';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'perm-row-check';
+    cb.dataset.key = user.key;
+    tdSel.appendChild(cb);
+    tr.appendChild(tdSel);
+
+    const tdUser = document.createElement('td');
+    tdUser.style.cssText = 'padding:6px 8px;white-space:nowrap';
+    tdUser.textContent = user.key + (user.owner ? ' · 管理员' : '');
+    if (user.owner) tdUser.style.fontWeight = '600';
+    tr.appendChild(tdUser);
+
+    for (const cap of caps) {
+      const td = document.createElement('td');
+      td.style.cssText = 'padding:6px 8px;text-align:center';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.dataset.permCap = cap;
+      box.dataset.key = user.key;
+      box.checked = user.perms?.[cap] !== false;
+      if (user.owner) { box.disabled = true; box.checked = true; }
+      td.appendChild(box);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  // 状态提示
+  const status = document.getElementById('permStatus');
+  if (status) status.textContent = `共 ${users.length} 个会话`;
+}
+
+function permCheckedKeys() {
+  return [...document.querySelectorAll('.perm-row-check:checked')].map((el) => el.dataset.key);
+}
+
+function permApplyBatch(mode) {
+  const keys = permCheckedKeys();
+  if (!keys.length) { document.getElementById('permStatus').textContent = '先勾选要批量修改的行'; return; }
+  const { caps } = permModel;
+  for (const key of keys) {
+    const boxes = [...document.querySelectorAll(`input[data-perm-cap][data-key="${CSS.escape(key)}"]`)];
+    for (const box of boxes) {
+      if (box.disabled) continue;
+      const cap = box.dataset.permCap;
+      if (mode === 'all') box.checked = true;
+      else if (mode === 'none') box.checked = false;
+      else if (mode === 'chat') box.checked = cap === 'chat';
+      else if (mode === 'gen') box.checked = cap !== 'chat';
+    }
+  }
+  document.getElementById('permStatus').textContent = `已对 ${keys.length} 行应用「${mode}」，点保存生效`;
+}
+
+async function savePermissions() {
+  const users = {};
+  for (const box of document.querySelectorAll('input[data-perm-cap]')) {
+    if (box.disabled) continue;
+    const key = box.dataset.key;
+    const cap = box.dataset.permCap;
+    users[key] = users[key] ?? {};
+    users[key][cap] = box.checked;
+  }
+  const status = document.getElementById('permStatus');
+  try {
+    const res = await api('/api/permissions', 'POST', { users });
+    if (status) status.textContent = `已保存（${res.changed} 项）`;
+    showConsoleToast('用户权限已保存');
+    await loadPermissions();
+  } catch (error) {
+    if (status) status.textContent = '保存失败：' + (error?.message ?? error);
+  }
+}
+
+document.getElementById('permSelectAll')?.addEventListener('click', () => {
+  document.querySelectorAll('.perm-row-check').forEach((el) => { el.checked = true; });
+});
+document.getElementById('permSelectNone')?.addEventListener('click', () => {
+  document.querySelectorAll('.perm-row-check').forEach((el) => { el.checked = false; });
+});
+document.querySelectorAll('[data-perm-batch]').forEach((btn) => {
+  btn.addEventListener('click', () => permApplyBatch(btn.dataset.permBatch));
+});
+document.getElementById('permSave')?.addEventListener('click', savePermissions);
+
 function setConsolePage(page, { updateHash = true, focus = false, target = '' } = {}) {
   if (!Object.hasOwn(consolePages, page)) page = 'overview';
   currentConsolePage = page;
@@ -4199,6 +4372,7 @@ function setConsolePage(page, { updateHash = true, focus = false, target = '' } 
   // 语音库按需加载：进入DeepSeek娘聊天页时才探测（避免每次开控制台都压网关）。
   if (page === 'social-v2' && typeof loadVoiceLibrary === 'function') loadVoiceLibrary();
   if (page === 'media' && typeof loadMediaSettings === 'function') loadMediaSettings();
+  if (page === 'access' && typeof loadPermissions === 'function') loadPermissions();
   if (focus) {
     document.getElementById('mainContent').focus({ preventScroll: true });
     document.getElementById(target || 'mainContent')?.scrollIntoView({ block: 'start', behavior: 'instant' });

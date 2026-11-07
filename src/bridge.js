@@ -5643,6 +5643,62 @@ function startConsoleServer() {
     }
   }
 
+        // ── 按用户权限：读取 / 批量保存（仅控制台，agent token 已被白名单挡住）──
+        if (url.pathname === '/api/permissions') {
+          if (req.method === 'GET') {
+            const pf = readPermFile();
+            const keys = new Set([
+              ...(cfg.allow?.private ?? []).map((id) => `private:${id}`),
+              ...(cfg.allow?.groups ?? []).map((id) => `group:${id}`),
+              ...Object.keys(pf.users)
+            ]);
+            const users = [...keys].map((k) => {
+              const [kind, id] = k.split(':');
+              return {
+                key: k,
+                kind,
+                id: Number(id),
+                label: kind === 'group' ? `群 ${id}` : `QQ ${id}`,
+                owner: isOwnerKey(k),
+                perms: permCapsFor(k)
+              };
+            }).sort((a, b) => (a.kind === b.kind ? a.id - b.id : a.kind === 'private' ? -1 : 1));
+            sendJson({ ok: true, caps: PERM_CAPS, labels: PERM_LABELS, defaults: pf.defaults, users });
+            return;
+          }
+          if (req.method === 'POST') {
+            const body = await readBody();
+            const pf = readPermFile();
+            const next = { defaults: { ...pf.defaults }, users: { ...pf.users } };
+            if (body.defaults && typeof body.defaults === 'object') {
+              for (const cap of PERM_CAPS) {
+                if (typeof body.defaults[cap] === 'boolean') next.defaults[cap] = body.defaults[cap];
+              }
+            }
+            let changed = 0;
+            if (body.users && typeof body.users === 'object') {
+              for (const [key, caps] of Object.entries(body.users)) {
+                if (!/^(group|private):\d+$/.test(key) || !caps || typeof caps !== 'object') continue;
+                const merged = { ...(next.users[key] ?? {}) };
+                for (const cap of PERM_CAPS) {
+                  if (typeof caps[cap] === 'boolean') merged[cap] = caps[cap];
+                }
+                // 与默认一致就不落盘，保持文件干净
+                const sameAsDefault = PERM_CAPS.every((cap) => merged[cap] === undefined || merged[cap] === next.defaults[cap]);
+                if (sameAsDefault) delete next.users[key]; else next.users[key] = merged;
+                changed++;
+              }
+            }
+            if (Array.isArray(body.reset)) {
+              for (const key of body.reset) { delete next.users[key]; changed++; }
+            }
+            writePermFile(next);
+            log(`控制台：用户权限已更新（${changed} 项；默认 ${PERM_CAPS.map((c) => c + '=' + (next.defaults[c] ? '1' : '0')).join(',')}）`);
+            sendJson({ ok: true, changed, defaults: next.defaults, users: next.users });
+            return;
+          }
+        }
+
         // ── 管理员专用：本机命令 / 文件 / 下载 / 安装（仅 ownerQQ 私聊）──────
         if (req.method === 'POST' && url.pathname.startsWith('/api/admin/')) {
           const body = await readBody();
@@ -5806,6 +5862,12 @@ function startConsoleServer() {
           if (!token) { sendJson({ ok: false, error: 'reserved2 模式必须携带 agent token' }, 403); return; }
           if (!agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (!v2ToolEnabled(flag)) { sendJson({ ok: false, error: `工具未启用：qq_${flag}` }, 403); return; }
+          // 按用户权限：该会话是否被允许用这项能力（控制台可勾选/批量）
+          if (flag !== 'sing' && !permAllowed(key, flag)) {
+            log(`[perm] 拒绝 ${key} 使用 ${flag}`);
+            sendJson({ ok: false, error: permDeniedError(flag) }, 403);
+            return;
+          }
           if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
           const km = /^(group|private):(\d+)$/.exec(key);
@@ -5957,6 +6019,7 @@ function startConsoleServer() {
           if (!token) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
           if (!agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (!v2ToolEnabled('sendVoice')) { sendJson({ ok: false, error: '工具未启用：qq_send_voice' }, 403); return; }
+          if (!permAllowed(key, 'voice')) { log(`[perm] 拒绝 ${key} 使用 voice`); sendJson({ ok: false, error: permDeniedError('voice') }, 403); return; }
           if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
           const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -6073,6 +6136,7 @@ function startConsoleServer() {
           if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('sendSticker')) { sendJson({ ok: false, error: '工具未启用：qq_send_sticker' }, 403); return; }
+          if (req.headers['x-agent-token'] && !permAllowed(key, 'sticker')) { log(`[perm] 拒绝 ${key} 使用 sticker`); sendJson({ ok: false, error: permDeniedError('sticker') }, 403); return; }
           if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
           if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
           const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -7421,6 +7485,69 @@ function startConsoleServer() {
   function errorsToOwnerOnly() {
     return cfg.security?.errorsToOwnerOnly !== false;
   }
+
+  // ── 按用户/群的能力权限（控制台「访问与安全」页可勾选，支持批量）──────
+  // 存储：state/permissions.json
+  //   { "defaults": { chat, draw, video, cover, voice, sticker },
+  //     "users": { "private:123": { "draw": false } } }   // 只存与默认不同的项
+  const PERM_CAPS = ['chat', 'draw', 'video', 'cover', 'voice', 'sticker'];
+  const PERM_LABELS = {
+    chat: '聊天', draw: '图片生成', video: '视频生成', cover: '翻唱', voice: '语音回答', sticker: '表情包'
+  };
+  const PERM_FILE = path.join(STATE_DIR, 'permissions.json');
+  let permCache = { mtimeMs: 0, data: null };
+
+  function permDefaults() {
+    return { chat: true, draw: true, video: true, cover: true, voice: true, sticker: true };
+  }
+
+  function readPermFile() {
+    try {
+      const st = fs.statSync(PERM_FILE);
+      if (permCache.data && permCache.mtimeMs === st.mtimeMs) return permCache.data;
+      const raw = JSON.parse(fs.readFileSync(PERM_FILE, 'utf8'));
+      const data = {
+        defaults: { ...permDefaults(), ...(raw.defaults ?? {}) },
+        users: (raw.users && typeof raw.users === 'object' && !Array.isArray(raw.users)) ? raw.users : {}
+      };
+      for (const cap of PERM_CAPS) data.defaults[cap] = data.defaults[cap] !== false;
+      permCache = { mtimeMs: st.mtimeMs, data };
+      return data;
+    } catch {
+      const data = { defaults: permDefaults(), users: {} };
+      permCache = { mtimeMs: 0, data };
+      return data;
+    }
+  }
+
+  function writePermFile(next) {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    atomicWriteJson(PERM_FILE, next);
+    try { permCache = { mtimeMs: fs.statSync(PERM_FILE).mtimeMs, data: next }; } catch { permCache = { mtimeMs: 0, data: next }; }
+  }
+
+  /** 某会话的最终权限（默认值 + 用户覆盖；管理员永远全开） */
+  function permCapsFor(key) {
+    const base = { ...readPermFile().defaults };
+    if (isOwnerKey(key)) return Object.fromEntries(PERM_CAPS.map((c) => [c, true]));
+    const over = readPermFile().users[key];
+    if (over && typeof over === 'object') {
+      for (const cap of PERM_CAPS) if (over[cap] === false) base[cap] = false;
+      for (const cap of PERM_CAPS) if (over[cap] === true) base[cap] = true;
+    }
+    return base;
+  }
+
+  function permAllowed(key, cap) {
+    if (!PERM_CAPS.includes(cap)) return true;
+    return permCapsFor(key)[cap] !== false;
+  }
+
+  /** 拒绝时的统一文案（给 AI 与日志用） */
+  function permDeniedError(cap) {
+    return `该会话未被授权使用「${PERM_LABELS[cap] ?? cap}」（管理员可在控制台「访问与安全」里勾选）`;
+  }
+
   /**
    * 发送「错误类」消息：管理员全量收到；普通用户默认什么都不发（只记日志）。
    * @param {string} key 会话 key
@@ -11262,6 +11389,12 @@ function startConsoleServer() {
         return;
       }
       const st = getSocialV2State(key);
+      // 按用户权限：chat 关了就连记录/唤醒都不做（连"未读"都不产生）
+      if (!permAllowed(key, 'chat')) {
+        log(`[perm] 忽略 ${key} 的消息（该会话未授权「聊天」）`);
+        appendActivity(`${key} [perm] 已忽略：未授权聊天`);
+        return;
+      }
       if (!st.bootstrapSent) {
         st.bootstrapSent = true;
         saveSocialV2State();
