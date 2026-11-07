@@ -1,0 +1,39 @@
+{
+  "_comment": "Memory StarMap 数据源配置示例。改成本地路径后执行 python3 src/build.py --sources sources.json",
+  "layout_url": "http://127.0.0.1:8110/layout",
+  "layout_iters": 80,
+  "df_max": 25,
+  "edge_per_node": 3,
+  "edge_min_score": 1.2,
+  "evidence_target_sources": ["cold"],
+  "sources": [
+    {
+      "type": "sqlite",
+      "name": "dream",
+      "path": "/path/to/dream.db",
+      "sql": "select id, day, text, kind, importance, evidence from items where superseded_by is null",
+      "columns": ["id", "day", "text", "kind", "weight", "evidence"],
+      "weight_default": 0.7
+    },
+    {
+      "type": "sqlite",
+      "name": "cold",
+      "path": "/path/to/cold.db",
+      "sql": "select id, day, text, role, importance from msgs where length(text) > 30",
+      "columns": ["id", "day", "text", "role", "weight"],
+      "kind_default": "msg",
+      "weight_default": 0.5
+    },
+    {
+      "type": "markdown",
+      "name": "daybook",
+      "path": "/path/to/daybook"
+    }
+  ],
+  "retrieval": {
+    "vec": {"cold": {"docs": 0, "chunks": 0, "built_at": "—"},
+            "dream": {"docs": 0, "chunks": 0, "built_at": "—"}},
+    "eval": {"at": "—", "mode": "rewrite", "n": 0,
+             "r5": 0, "kw": 0, "nl": 0, "neg": 0, "ms": 0}
+  }
+}

@@ -1,77 +1,81 @@
-# v0.1.14
+# v0.1.15
 
-新增**按会话的用户权限**：控制台「访问与安全」页可以对每个私聊/群单独勾选能力，支持批量修改，保存立即生效。
+新增**记忆星图**功能栏，以及**记忆分组**（哪些会话共享一份记忆）。
 
-## 权限项
+## 1. 记忆星图（控制台独立分栏）
 
-| 能力 | key | 关掉之后 |
-|---|---|---|
-| 聊天 | `chat` | 消息**直接忽略**，不入未读、不唤醒（连提示都不产生） |
-| 图片生成 | `draw` | `qq_draw` 返回 403「未被授权使用图片生成」 |
-| 视频生成 | `video` | `qq_video` 返回 403 |
-| 翻唱 | `cover` | `qq_cover` 返回 403 |
-| 语音回答 | `voice` | `qq_send_voice` 返回 403 |
-| 表情包 | `sticker` | `qq_send_sticker` 返回 403 |
+左侧导航「聊天行为 → ✦ 记忆星图」：
 
-管理员（`ownerQQ`）**恒为全开**，表格里那一行是灰的，改不了 —— 避免把自己锁死。
+- 顶部选**视图**（每个会话一份，或每个记忆分组一份）→ 点「构建 / 重新构建」
+- 下方是三维星图：每条记忆一颗星、真实关系一根线、每天一个日期星
+- 支持拖拽旋转、滚轮缩放、点星聚焦、`Space` 逐日回放、`R` 复位、`F` 全屏
 
-## 控制台怎么用
+底层用 [painter-7/memory-starmap](https://github.com/painter-7/memory-starmap)（已 vendored 到 `vendor/memory-starmap/`，未改算法）。
 
-「访问与安全」→ 最下面新增卡片 **用户权限（按会话勾选 · 可批量）**：
+**数据来源**：桥接本地状态，不读 DSH 会话内容 ——
+各会话的 `recentMessages`（kind=msg/reply）、`activeTopics`（topic）、`pendingThoughts`（thought）、`memberImpressions`（impression）。
 
-1. 每行一个会话（私聊/群），右边 6 个勾选框；
-2. 左列勾选要做批量的行 → 点 **全开 / 全关 / 仅聊天 / 仅生成能力**；
-3. 点 **保存权限**，立即生效（写 `state/permissions.json`）。
+**依赖**：Python 3.9+ 与 numpy（`python -m pip install numpy`）。没装 python 时构建会报错，控制台会显示原因。
 
-页面顶部还有「全选行 / 全不选行」，一次性处理所有会话。
+## 2. 记忆分组（默认各自独立）
 
-## 存放位置与默认值
+同一页第二张卡：「记忆分组」。
 
-```json
-// state/permissions.json
-{
-  "defaults": { "chat": true, "draw": true, "video": true, "cover": true, "voice": true, "sticker": true },
-  "users": { "private:123456": { "draw": false, "video": false } }
-}
-```
+- 勾选若干私聊/群 → 填个名字 → **新建分组**
+- 同组会话共享一份记忆空间（`state/memory-groups.json`），星图合并展示
+- 删除分组即恢复各自独立
 
-- **没有单独设置过的会话 = 全开**（默认值就是全开，保持向后兼容）
-- 只存「与默认不同」的项，文件保持干净
-- 想让所有新会话默认不能生成图，把 `defaults.draw` 改 `false` 即可（也可以在 API 里传 `defaults`）
+**边界说明**：分组共享的是桥接侧的轻量记忆与星图；DSH 的对话上下文仍按会话隔离（每个 QQ 会话一个 DSH session）。要真正做到「上下文也互通」需要改 session 映射，属于更大改动，本版没做。
 
-## API（供脚本/自动化）
+## 3. 记忆星图权限（对谁开放）
+
+「访问与安全 → 用户权限」表新增第 7 列 **记忆星图**：
+
+- **默认关闭**（其他人调用返回 403「未被授权使用记忆星图」）
+- **管理员（ownerQQ）恒开**
+- 勾选保存后立即生效
+
+AI 侧工具：`qq_starmap`（构建 + 返回星数/连线数/天数）。
+
+安全细节：星图画面地址里带控制台令牌，所以**只有管理员**能拿到 URL；其他人只拿到统计数字（`url: null`）。
+
+## 4. 接口
 
 ```bash
-# 读
-curl -H "x-console-token: $TOKEN" http://127.0.0.1:3100/api/permissions
+# 概览（有哪些视图、各自建过没有）
+curl -H "x-console-token: $TOKEN" http://127.0.0.1:3100/api/starmap
 
-# 批量写（只传要改的项）
-curl -X POST http://127.0.0.1:3100/api/permissions \
+# 构建某个视图
+curl -X POST http://127.0.0.1:3100/api/starmap/build \
   -H "x-console-token: $TOKEN" -H 'content-type: application/json' \
-  -d '{"users":{"private:123456":{"draw":false,"video":false},"group:987654":{"chat":true}}}'
+  -d '{"ns":"private:123456"}'
 
-# 恢复某会话到默认
-curl -X POST http://127.0.0.1:3100/api/permissions \
+# 记忆分组
+curl -H "x-console-token: $TOKEN" http://127.0.0.1:3100/api/memory-groups
+curl -X POST http://127.0.0.1:3100/api/memory-groups \
   -H "x-console-token: $TOKEN" -H 'content-type: application/json' \
-  -d '{"reset":["private:123456"]}'
+  -d '{"groups":[{"id":"family","name":"家人","members":["private:111","private:222"]}]}'
 ```
 
-该接口**仅控制台可用**：带 `x-agent-token` 的 AI 调用会被白名单挡住（AI 不能给自己提权）。
+星图静态资源：`/starmap/<consoleToken>/<dir>/index.html`（路径里带 token，是为了让页面内的相对 `fetch` 也能通过鉴权；令牌不对返回 403）。
 
-## 与「管理员本机工具」的关系
+## 5. 产物位置
 
-两者独立：
+```
+state/starmap/<dir>/memories.jsonl   # 导出的记忆（可 diff、可手改）
+state/starmap/<dir>/sources.json     # 构建配置
+state/starmap/<dir>/starmap.json     # 星图数据（前端直接读）
+state/starmap/<dir>/starmap.js       # 同上，给 iframe 场景兜底
+```
 
-- **用户权限**决定「这个会话能用哪些聊天/生成能力」；
-- **管理员工具**（`qq_admin_*`）只认 `private:<ownerQQ>`，其他会话一律 403。
-
-所以把某个好友的 `chat` 打开、生成能力也打开，它依然**动不了电脑**。
+`state/` 在 `.gitignore` 里，不会被提交。
 
 ## 升级
 
 ```bash
 git pull
-# 重启桥接（后端与页面都改了）
+python -m pip install numpy        # 若未装
+# 重启桥接 → 打开控制台左侧「记忆星图」
 ```
 
-升级后打开控制台「访问与安全」，页面底部即可看到新的权限表。
+首次进入页面点「构建 / 重新构建」即可看到自己的星图（没有记忆时会是一张空图，先去 QQ 里聊几句）。

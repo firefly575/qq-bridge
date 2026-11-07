@@ -3213,6 +3213,43 @@ function startConsoleServer() {
         return crypto.timingSafeEqual(a, b);
       })();
       if (consoleToken && !tokenMatches) {
+        // ── 记忆星图静态资源：/starmap/<consoleToken>/<dir>/<file> ──
+        // 路径里带 token 是为了让 index.html 里的相对 fetch（app.js / starmap.json）也能通过鉴权。
+        if (req.method === 'GET' && url.pathname.startsWith('/starmap/')) {
+          const parts = url.pathname.split('/').filter(Boolean); // ['starmap', token, dir, ...file]
+          const supplied = parts[1] ?? '';
+          const okToken = (() => {
+            if (!consoleToken) return false;
+            const a = Buffer.from(supplied, 'utf8');
+            const b = Buffer.from(consoleToken, 'utf8');
+            return a.length === b.length && crypto.timingSafeEqual(a, b);
+          })();
+          if (!okToken) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); res.end('forbidden'); return; }
+          const dirName = String(parts[2] ?? '').replace(/[^A-Za-z0-9._-]/g, '');
+          const rel = parts.slice(3).join('/') || 'index.html';
+          const safeRel = rel.replace(/\.\./g, '').replace(/^\/+/, '');
+          const candidates = [
+            path.join(STATE_DIR, 'starmap', dirName, safeRel),
+            path.join(ROOT, 'vendor', 'memory-starmap', 'web', safeRel)
+          ];
+          const found = candidates.find((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
+          if (!found) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('not found'); return; }
+          const ext = path.extname(found).toLowerCase();
+          const types = {
+            '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+            '.json': 'application/json; charset=utf-8', '.css': 'text/css; charset=utf-8',
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml',
+            '.woff2': 'font/woff2', '.wasm': 'application/wasm'
+          };
+          res.writeHead(200, {
+            'content-type': types[ext] ?? 'application/octet-stream',
+            'cache-control': 'no-store',
+            ...SECURITY_HEADERS
+          });
+          try { res.end(fs.readFileSync(found)); } catch { res.end(); }
+          return;
+        }
+
         if (req.method === 'GET' && url.pathname === '/') {
           res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           res.end('<!doctype html><meta charset="utf-8"><title>需要令牌</title><script>const t=prompt(\'请输入控制台访问令牌\');if(t)location.href=\'/?token=\'+encodeURIComponent(t);</script>');
@@ -5643,6 +5680,80 @@ function startConsoleServer() {
     }
   }
 
+        // ── 记忆分组（决定哪些会话共用一份记忆）──────────────────────
+        if (url.pathname === '/api/memory-groups') {
+          if (req.method === 'GET') {
+            const social = JSON.parse((() => { try { return fs.readFileSync(path.join(STATE_DIR, 'social-v2.json'), 'utf8'); } catch { return '{"conversations":{}}'; } })());
+            const keys = new Set([
+              ...(cfg.allow?.private ?? []).map((id) => `private:${id}`),
+              ...(cfg.allow?.groups ?? []).map((id) => `group:${id}`),
+              ...Object.keys(social.conversations ?? {})
+            ]);
+            sendJson({
+              ok: true,
+              groups: readMemoryGroups(),
+              candidates: [...keys].sort().map((k) => ({ key: k, members: memoryNsMembers(k).length }))
+            });
+            return;
+          }
+          if (req.method === 'POST') {
+            const body = await readBody();
+            const list = Array.isArray(body.groups) ? body.groups : [];
+            const seen = new Set();
+            const cleaned = [];
+            for (const g of list) {
+              const id = String(g?.id ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '');
+              const name = String(g?.name ?? '').trim() || id;
+              const members = [...new Set((Array.isArray(g?.members) ? g.members : []).map(String).filter((m) => /^(group|private):\d+$/.test(m)))];
+              if (!id || seen.has(id)) continue;
+              seen.add(id);
+              cleaned.push({ id, name, members });
+            }
+            writeMemoryGroups(cleaned);
+            log(`控制台：记忆分组已更新（${cleaned.length} 组）`);
+            sendJson({ ok: true, groups: cleaned });
+            return;
+          }
+        }
+
+        // ── 记忆星图：概览 / 构建 ────────────────────────────────
+        if (url.pathname === '/api/starmap' && req.method === 'GET') {
+          const social = JSON.parse((() => { try { return fs.readFileSync(path.join(STATE_DIR, 'social-v2.json'), 'utf8'); } catch { return '{"conversations":{}}'; } })());
+          const target = String(url.searchParams.get('ns') ?? '').trim();
+          const nsList = [
+            ...Object.keys(social.conversations ?? {}).map((k) => ({ ns: k, kind: '会话', name: k })),
+            ...readMemoryGroups().map((g) => ({ ns: `group:${g.id}`, kind: '分组', name: g.name }))
+          ];
+          const summaries = nsList.map((x) => ({ ...x, ...starmapSummary(x.ns) }));
+          sendJson({
+            ok: true,
+            current: target || null,
+            summary: target ? starmapSummary(target) : null,
+            namespaces: summaries,
+            token: consoleToken,
+            vendorReady: fs.existsSync(path.join(ROOT, 'vendor', 'memory-starmap', 'src', 'build.py'))
+          });
+          return;
+        }
+
+        if (url.pathname === '/api/starmap/build' && req.method === 'POST') {
+          const body = await readBody();
+          const ns = String(body.ns ?? '').trim();
+          if (!/^(group:[A-Za-z0-9_-]+|(group|private):\d+)$/.test(ns)) { sendJson({ ok: false, error: 'ns 格式应为 private:123 / group:456 / group:<分组id>' }, 400); return; }
+          try {
+            log(`[starmap] 开始构建 ${ns}`);
+            const outText = execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'build-starmap.mjs'), '--ns', ns], {
+              cwd: ROOT, encoding: 'utf8', timeout: 600000
+            });
+            const result = JSON.parse(outText.trim());
+            log(`[starmap] 构建完成 ${ns}：nodes=${result.nodes ?? 0} links=${result.links ?? 0}`);
+            sendJson({ ok: !result.error, ...result, dir: nsToDirName(ns), url: `/starmap/${consoleToken}/${nsToDirName(ns)}/index.html` });
+          } catch (error) {
+            sendJson({ ok: false, error: String(error?.stderr || error?.message || error).slice(0, 800) }, 500);
+          }
+          return;
+        }
+
         // ── 按用户权限：读取 / 批量保存（仅控制台，agent token 已被白名单挡住）──
         if (url.pathname === '/api/permissions') {
           if (req.method === 'GET') {
@@ -6004,6 +6115,40 @@ function startConsoleServer() {
               status = 402;
             }
             sendJson({ ok: false, error: msg }, status);
+          }
+          return;
+        }
+
+        // ── 记忆星图（agent 侧）：按 starmap 权限构建并返回入口 ──────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/starmap') {
+          const body = await readBody();
+          const token = String(body.token ?? req.headers['x-agent-token'] ?? '').trim();
+          const key = String(body.key ?? '').trim();
+          if (!token) { sendJson({ ok: false, error: '必须携带 agent token' }, 403); return; }
+          if (!agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (!permAllowed(key, 'starmap')) { log(`[perm] 拒绝 ${key} 使用记忆星图`); sendJson({ ok: false, error: permDeniedError('starmap') }, 403); return; }
+          const ns = memoryNsFor(key);
+          try {
+            log(`[starmap] agent 触发构建 ${ns}（来自 ${key}）`);
+            const text = execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'build-starmap.mjs'), '--ns', ns], { cwd: ROOT, encoding: 'utf8', timeout: 600000 });
+            const result = JSON.parse(text.trim());
+            const dir = nsToDirName(ns);
+            const viewUrl = `/starmap/${consoleToken}/${dir}/index.html`;
+            sendJson({
+              ok: !result.error,
+              ns,
+              items: result.items ?? 0,
+              nodes: result.nodes ?? 0,
+              links: result.links ?? 0,
+              days: result.days ?? 0,
+              // 星图入口含控制台令牌：只发给管理员，其他人只给统计
+              url: isOwnerKey(key) ? viewUrl : null,
+              note: isOwnerKey(key) ? null : '星图画面仅管理员的控制台可查看',
+              error: result.error
+            });
+          } catch (error) {
+            sendJson({ ok: false, error: String(error?.stderr || error?.message || error).slice(0, 500) }, 500);
           }
           return;
         }
@@ -7490,15 +7635,19 @@ function startConsoleServer() {
   // 存储：state/permissions.json
   //   { "defaults": { chat, draw, video, cover, voice, sticker },
   //     "users": { "private:123": { "draw": false } } }   // 只存与默认不同的项
-  const PERM_CAPS = ['chat', 'draw', 'video', 'cover', 'voice', 'sticker'];
+  const PERM_CAPS = ['chat', 'draw', 'video', 'cover', 'voice', 'sticker', 'starmap'];
   const PERM_LABELS = {
-    chat: '聊天', draw: '图片生成', video: '视频生成', cover: '翻唱', voice: '语音回答', sticker: '表情包'
+    chat: '聊天', draw: '图片生成', video: '视频生成', cover: '翻唱', voice: '语音回答', sticker: '表情包', starmap: '记忆星图'
   };
+  // 各能力的默认值：只有「记忆星图」默认关闭（需显式开放；管理员恒开）
+  function permDefaultFor(cap) {
+    return cap !== 'starmap';
+  }
   const PERM_FILE = path.join(STATE_DIR, 'permissions.json');
   let permCache = { mtimeMs: 0, data: null };
 
   function permDefaults() {
-    return { chat: true, draw: true, video: true, cover: true, voice: true, sticker: true };
+    return Object.fromEntries(PERM_CAPS.map((cap) => [cap, permDefaultFor(cap)]));
   }
 
   function readPermFile() {
@@ -7541,6 +7690,81 @@ function startConsoleServer() {
   function permAllowed(key, cap) {
     if (!PERM_CAPS.includes(cap)) return true;
     return permCapsFor(key)[cap] !== false;
+  }
+
+  // ── 记忆分组：把若干会话绑成一份「共享记忆」──────────────────
+  // 存储：state/memory-groups.json → { groups: [{ id, name, members: ["private:1", ...] }] }
+  const MEMORY_GROUPS_FILE = path.join(STATE_DIR, 'memory-groups.json');
+
+  function readMemoryGroups() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(MEMORY_GROUPS_FILE, 'utf8'));
+      const list = Array.isArray(raw?.groups) ? raw.groups : [];
+      return list
+        .filter((g) => g && typeof g.id === 'string' && Array.isArray(g.members))
+        .map((g) => ({
+          id: g.id,
+          name: String(g.name ?? g.id),
+          members: g.members.filter((m) => /^(group|private):\d+$/.test(String(m)))
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  function writeMemoryGroups(list) {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    atomicWriteJson(MEMORY_GROUPS_FILE, { groups: list });
+  }
+
+  /** 某会话的记忆命名空间：在某个分组里就用分组 id，否则就是自己的 key */
+  function memoryNsFor(key) {
+    for (const g of readMemoryGroups()) {
+      if (g.members.includes(key)) return `group:${g.id}`;
+    }
+    return key;
+  }
+
+  /** 命名空间覆盖的所有会话 key（单会话 ns 就是它自己） */
+  function memoryNsMembers(ns) {
+    const m = /^group:(.+)$/.exec(ns);
+    if (!m) return [ns];
+    const g = readMemoryGroups().find((x) => x.id === m[1]);
+    return g ? [...new Set(g.members)] : [];
+  }
+
+  /** ns 转成安全的目录名 */
+  function nsToDirName(ns) {
+    return String(ns).replace(/[^A-Za-z0-9._-]+/g, '_');
+  }
+
+  /** 星图产物根目录（每个 ns 一个子目录） */
+  function starmapRoot() {
+    return path.join(STATE_DIR, 'starmap');
+  }
+
+  function starmapDir(ns) {
+    return path.join(starmapRoot(), nsToDirName(ns));
+  }
+
+  function starmapSummary(ns) {
+    const dir = starmapDir(ns);
+    const jsonPath = path.join(dir, 'starmap.json');
+    try {
+      const st = fs.statSync(jsonPath);
+      const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      return {
+        ns,
+        dir: nsToDirName(ns),
+        builtAt: st.mtimeMs,
+        nodes: data?.stats?.nodes ?? (data?.nodes?.length ?? 0),
+        links: data?.stats?.links ?? (data?.links?.length ?? 0),
+        days: data?.days?.length ?? 0,
+        memberCount: memoryNsMembers(ns).length
+      };
+    } catch {
+      return { ns, dir: nsToDirName(ns), builtAt: 0, nodes: 0, links: 0, days: 0, memberCount: memoryNsMembers(ns).length };
+    }
   }
 
   /** 拒绝时的统一文案（给 AI 与日志用） */

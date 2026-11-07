@@ -1217,6 +1217,23 @@ if (cfg.socialV2?.voice?.enabled !== false && cfg.socialV2?.tools?.sendVoice !==
     );
   }
 
+  server.tool(
+    'qq_starmap',
+    '构建「记忆星图」：把这个会话（或它所在的记忆分组）的记忆渲染成三维星图。仅被授权「记忆星图」权限的会话可用（管理员默认开放），其他人调用会 403。返回星数/连线数/天数；管理员额外拿到可直接打开的画面地址。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）')
+    },
+    async ({ key, token }) => {
+      try {
+        const data = await agentApi('/api/socialV2/starmap', { method: 'POST', body: JSON.stringify({ key, token }), headers: { 'x-agent-token': token }, timeoutMs: 600000 });
+        return { content: [{ type: 'text', text: JSON.stringify(data).slice(0, 2000) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `星图构建失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+
   if (cfg.socialV2?.cover?.enabled !== false) {
     server.tool(
       'qq_cover',

@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Memory StarMap · 3D 记忆可视化</title>
+<style>
+  :root{
+    --bg:#04060d;
+    --ink:#e8f1ff;
+    --dim:#7b8db0;
+    --dim2:#5a6b8c;
+    --line:rgba(120,170,255,.16);
+    --hair:rgba(120,170,255,.07);
+    --panelbg:rgba(8,12,22,.72);
+    --fact:#7fc8ff;
+    --lesson:#ffb86b;
+    --preference:#ff8fc7;
+    --msg:#7f93bd;
+    --doc:#9fe6c8;
+    --day:#ffd479;
+
+    /* 版式：左右两条 HUD 栏 + 顶部标题 + 底部活动条，只在这里改尺寸 */
+    --edge:20px;
+    --hud-w:296px;
+    --h1:17px;
+    --ui:11.5px;
+    --card-w:380px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    -webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  /* 2026-11-07 背景视频素材：铺在最底层，压暗当背景，打开页面自动播一遍 */
+  #bgv{position:fixed;inset:0;z-index:0;pointer-events:none;background:#04060d;
+    opacity:0;transition:opacity 1.1s ease}
+  #bgv.on{opacity:.88}
+  /* 2026-11-07 播完只留一层很淡的still当底纹，别抢星空 */
+  #bgv.dim{opacity:.26}
+  #bgv video{width:100%;height:100%;object-fit:cover;object-position:center 42%;
+    filter:brightness(.92) saturate(.9) contrast(1.02) blur(.6px);display:block}
+  #bgv::after{content:'';position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 46%,rgba(4,6,13,.02) 6%,rgba(4,6,13,.28) 50%,rgba(2,3,8,.88) 100%)}
+  #stage{position:fixed;inset:0;z-index:1;display:block;cursor:grab;touch-action:none;background:transparent}
+  #stage.dragging{cursor:grabbing}
+  .vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 46%,transparent 26%,rgba(2,4,10,.5) 74%,rgba(1,2,6,.92) 100%)}
+
+  /* ── 通用卡片外壳：细边 + 内嵌发丝线 + 四角刻度 ── */
+  .card2{position:relative;background:var(--panelbg);border:1px solid var(--line);
+    border-radius:11px;backdrop-filter:blur(13px);-webkit-backdrop-filter:blur(13px);
+    padding:11px 12px 12px;font-size:var(--ui)}
+  .card2::before{content:'';position:absolute;inset:4px;border:1px solid var(--hair);
+    border-radius:7px;pointer-events:none}
+  .card2::after{content:'';position:absolute;top:-1px;left:14px;width:34px;height:1px;
+    background:linear-gradient(90deg,rgba(127,200,255,.75),transparent);pointer-events:none}
+
+  /* 卡片小标题：中文 + 英文微字 + 右侧状态 */
+  .ch{display:flex;align-items:baseline;gap:7px;margin-bottom:9px;position:relative;z-index:1}
+  .ch .cn{font-size:11.5px;color:#cfdcf2;letter-spacing:.08em;font-weight:500}
+  .ch em{font-style:normal;font-size:8.5px;color:var(--dim2);letter-spacing:.18em;text-transform:uppercase}
+  .ch i{font-style:normal;margin-left:auto;font-size:8.5px;letter-spacing:.14em;color:#5f8fd0}
+  .ch i.live{color:#5fe0a8}
+  .ch i.live::before{content:'●';margin-right:3px;animation:blink 1.6s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ── 顶部 ── */
+  .hd{position:fixed;top:0;left:0;right:0;z-index:5;pointer-events:none;
+    display:flex;align-items:flex-start;gap:18px;
+    padding:calc(var(--edge) + env(safe-area-inset-top,0px)) var(--edge) 0
+            calc(var(--edge) + env(safe-area-inset-left,0px))}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0}
+  .mark{width:26px;height:26px;flex:0 0 auto;border:1px solid rgba(127,200,255,.5);
+    border-radius:7px;display:flex;align-items:center;justify-content:center;
+    color:#bfe2ff;font-size:12px;box-shadow:0 0 18px rgba(90,160,255,.28) inset,0 0 14px rgba(80,150,255,.18)}
+  .hd h1{font-size:var(--h1);line-height:1.15;font-weight:600;letter-spacing:.13em;color:#e4eeff;
+    text-shadow:0 0 22px rgba(120,180,255,.5);white-space:nowrap}
+  .hd h1 span{color:var(--day);font-weight:400;letter-spacing:.06em}
+  .hd .sub{margin-top:5px;font-size:10.5px;color:var(--dim);letter-spacing:.05em;line-height:1.6}
+  .hd .sub b{color:#a9c4ef;font-weight:500}
+  .counts{display:flex;gap:16px;margin-left:auto;align-self:center;pointer-events:none;
+    flex:0 1 auto;min-width:0;overflow:hidden}
+  .counts .c{text-align:right;line-height:1.25;white-space:nowrap}
+  .counts .c b{display:block;font-size:14px;color:#d8e7ff;font-variant-numeric:tabular-nums;
+    font-weight:500;letter-spacing:.02em}
+  .counts .c span{display:block;font-size:9px;color:var(--dim2);letter-spacing:.04em;margin-top:1px}
+  .clock{text-align:right;line-height:1.3;padding-left:14px;border-left:1px solid var(--hair)}
+  .clock b{display:block;font-size:12.5px;color:#c9dcf7;font-variant-numeric:tabular-nums;letter-spacing:.08em}
+  .clock span{font-size:8.5px;color:var(--dim2);letter-spacing:.16em}
+
+  /* ── 左右 HUD 栏 ── */
+  .hud-left,.hud-right{position:fixed;z-index:6;display:flex;flex-direction:column;gap:10px;
+    width:var(--hud-w);max-height:calc(100dvh - 150px);overflow:hidden auto;
+    scrollbar-width:none;-ms-overflow-style:none}
+  .hud-left::-webkit-scrollbar,.hud-right::-webkit-scrollbar{display:none}
+  /* 列内子项别被 flex 压扁：压扁了就永远不会溢出，滚动条等于摆设 */
+  .hud-left>*,.hud-right>*{flex:0 0 auto}
+  .hud-left{left:calc(var(--edge) + env(safe-area-inset-left,0px));top:104px}
+  .hud-right{right:calc(var(--edge) + env(safe-area-inset-right,0px));top:104px}
+
+  /* ── 记忆褪色面板（2026-11-04 加，跟左栏现有卡片同一套皮肤） ── */
+  .fade-card{--ui:10.5px}
+  .fade-card .ch[role="button"]{cursor:pointer;user-select:none}
+  .fade-card .ch i{font-style:normal}
+  .fade-card.collapsed #fadeBody{display:none}
+  .fade-card .ch .chev{transition:transform .2s ease}
+  .fade-card.collapsed .ch .chev{transform:rotate(-90deg)}
+  .fade-card .ch i{font-style:normal}
+  .fade-bars{display:flex;height:7px;border-radius:4px;overflow:hidden;
+    background:rgba(255,255,255,.06);margin:2px 0 7px}
+  .fade-bars span{display:block;height:100%;transition:width .5s ease}
+  .fade-bars .l0{background:linear-gradient(90deg,#4fd1a5,#6fe0bd)}
+  .fade-bars .l1{background:linear-gradient(90deg,#e0b45f,#f0ca7a)}
+  .fade-bars .l2{background:linear-gradient(90deg,#c96a6a,#e08585)}
+  .fade-foot{display:flex;flex-wrap:wrap;gap:4px 9px;font-size:9px;color:var(--dim2);
+    letter-spacing:.02em;margin-bottom:6px}
+  .fade-foot b{color:#c9dcf7;font-weight:600;font-variant-numeric:tabular-nums}
+  .fade-list{display:flex;flex-direction:column;gap:5px;max-height:190px;overflow:hidden auto;
+    scrollbar-width:none}
+  .fade-list::-webkit-scrollbar{display:none}
+  .fade-item{border-top:1px solid var(--hair);padding-top:5px;line-height:1.45}
+  .fade-item:first-child{border-top:0;padding-top:0}
+  .fade-item .fh{display:flex;gap:6px;align-items:baseline;font-size:8.5px;color:var(--dim2)}
+  .fade-item .fh em{font-style:normal;padding:0 4px;border-radius:3px;
+    background:rgba(255,255,255,.08);color:#c9dcf7}
+  .fade-item .fh .lv1{background:rgba(224,180,95,.18);color:#f0ca7a}
+  .fade-item .fh .lv2{background:rgba(201,106,106,.2);color:#e89a9a}
+  .fade-item .fb{font-size:9.5px;color:#8fa6c4;text-decoration:line-through;
+    text-decoration-color:rgba(255,255,255,.22);margin-top:2px}
+  .fade-item .fa{font-size:10px;color:#c9dcf7;margin-top:1px}
+  .fade-item .fa u{text-decoration:none;color:#5e7391}
+  .fade-empty{font-size:9.5px;color:var(--dim2);padding:4px 0}
+
+  /* 右侧面板整体压一档：圆环、雷达、字号、行距一起收紧 */
+  .hud-right{--ui:10.5px;gap:8px}
+  .hud-right .card2{padding:9px 10px 10px}
+  .hud-right .ch{margin-bottom:7px}
+  .hud-right .ch .cn{font-size:10.5px}
+  .hud-right .ringwrap,.hud-right #ring{width:78px;height:78px}
+  .hud-right .ringtxt b{font-size:16px}
+  .hud-right .ringtxt span{font-size:8px}
+  .hud-right .pbars{gap:6px}
+  .hud-right .pb .t{font-size:9.5px}
+  .hud-right .energy{margin-top:8px;padding-top:7px}
+  .hud-right .trait{margin-top:8px;padding-top:7px}
+  .hud-right #radar{height:84px}
+  .hud-right .srow{padding:3px 4px;gap:6px}
+  .hud-right .srow .tx{font-size:10px}
+
+  /* 皮层导航 */
+  #minimap{display:block;width:100%;height:132px;border-radius:8px;
+    background:radial-gradient(ellipse at 50% 50%,rgba(20,34,60,.55),rgba(5,8,16,.9));
+    border:1px solid var(--hair)}
+  .navfoot{display:flex;justify-content:space-between;margin-top:7px;
+    font-size:9px;color:var(--dim2);letter-spacing:.08em}
+
+  /* 记忆构成：一条堆叠条 + 可点的行 */
+  .mixbar{display:flex;height:7px;border-radius:4px;overflow:hidden;
+    background:rgba(255,255,255,.05);margin-bottom:9px}
+  .mixbar i{display:block;height:100%;transition:opacity .18s,filter .18s}
+  .mixbar i.off{opacity:.18;filter:saturate(.2)}
+  .lg{display:flex;align-items:center;gap:8px;padding:4px 5px;border-radius:7px;cursor:pointer;
+    transition:background .16s,opacity .16s;user-select:none}
+  .lg:hover{background:rgba(120,170,255,.09)}
+  .lg.off{opacity:.3}
+  .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 9px currentColor}
+  .lg .nm{flex:1;color:#c3d4ee;font-size:11px}
+  .lg .ct{color:var(--dim);font-variant-numeric:tabular-nums;font-size:10.5px}
+  .sep{height:1px;background:var(--line);margin:8px 0}
+  .search{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--line);
+    border-radius:7px;color:var(--ink);padding:5px 8px;font-size:11.5px;line-height:1.25;
+    outline:none;height:27px}
+  .search::placeholder{color:#5b6b8a}
+  .search:focus{border-color:rgba(127,200,255,.5)}
+
+  /* 记忆构成卡可收起：点标题栏收成小胶囊，再点展开 */
+  #panel .ch{cursor:pointer;user-select:none;align-items:center;
+    -webkit-tap-highlight-color:transparent}
+  #panel .ch .chev{margin-left:7px;font-size:9px;color:var(--dim);line-height:1;
+    transition:transform .2s}
+  #panel.collapsed{width:auto;align-self:flex-start;padding:8px 11px;border-radius:999px}
+  #panel.collapsed .ch{margin-bottom:0}
+  #panel.collapsed .ch em,#panel.collapsed .ch i{display:none}
+  #panel.collapsed .ch .chev{transform:rotate(-90deg)}
+  #panel.collapsed .pbody{display:none}
+  .pbody{margin-top:2px}
+
+  /* ── 人格内核 ── */
+  .prow{display:flex;gap:12px;align-items:center}
+  .ringwrap{position:relative;width:96px;height:96px;flex:0 0 auto}
+  #ring{display:block;width:96px;height:96px}
+  .ringtxt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:1px}
+  .ringtxt b{font-size:20px;font-weight:500;color:#eaf4ff;font-variant-numeric:tabular-nums;
+    line-height:1;text-shadow:0 0 16px rgba(120,190,255,.5)}
+  .ringtxt span{font-size:8.5px;color:var(--dim2);letter-spacing:.12em}
+  .pbars{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+  .pb{font-size:10px}
+  .pb .t{display:flex;justify-content:space-between;color:#b9cbe6;letter-spacing:.05em}
+  .pb .t b{color:#dce9ff;font-weight:400;font-variant-numeric:tabular-nums}
+  .pb .track{height:4px;border-radius:3px;background:rgba(255,255,255,.07);margin-top:4px;overflow:hidden}
+  .pb .track i{display:block;height:100%;border-radius:3px;
+    box-shadow:0 0 10px currentColor;transition:width .6s ease}
+  .energy{margin-top:11px;padding-top:9px;border-top:1px solid var(--hair)}
+  .eh{display:flex;align-items:baseline;gap:6px;font-size:10px;color:#b9cbe6}
+  .eh em{font-style:normal;font-size:8px;color:var(--dim2);letter-spacing:.16em}
+  .eh b{margin-left:auto;color:#dce9ff;font-weight:400;font-variant-numeric:tabular-nums}
+  .ebar{height:4px;border-radius:3px;background:rgba(255,255,255,.07);margin-top:5px;overflow:hidden}
+  .ebar i{display:block;height:100%;border-radius:3px;
+    background:linear-gradient(90deg,#ffb86b,#ff8f6b);box-shadow:0 0 10px rgba(255,170,110,.55)}
+  .ecap{margin-top:5px;font-size:9.5px;color:#8ea3c6;letter-spacing:.03em}
+  .trait{margin-top:11px;padding-top:9px;border-top:1px solid var(--hair)}
+  .trait .tt{font-size:10px;color:#b9cbe6;display:flex;justify-content:space-between}
+  .trait .tt em{font-style:normal;font-size:8px;color:var(--dim2);letter-spacing:.16em}
+  #radar{display:block;width:100%;height:104px;margin-top:2px}
+
+  /* ── 认知流 ── */
+  .stream{flex:1;min-height:0;display:flex;flex-direction:column}
+  .stream-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+    display:flex;flex-direction:column;gap:1px;
+    -webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+    scrollbar-width:none;-ms-overflow-style:none}
+  .stream-body::-webkit-scrollbar{display:none}
+  .srow{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:6px;cursor:pointer;
+    transition:background .15s}
+  .srow:hover{background:rgba(120,170,255,.1)}
+  .srow .tm{font-size:9px;color:var(--dim2);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .srow .chip{font-size:8.5px;padding:1px 5px;border-radius:3px;border:1px solid currentColor;
+    flex:0 0 auto;line-height:1.5;opacity:.9}
+  .srow .tx{font-size:10.5px;color:#a9bcd8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ── 检索内核 ── */
+  .retr{flex:0 0 auto}
+  .rgrid{display:flex;gap:6px}
+  .rit{flex:1;min-width:0;padding:6px 7px;border:1px solid var(--hair);border-radius:7px;
+    background:rgba(120,170,255,.045)}
+  .rit b{display:block;font-size:14px;font-weight:400;color:#dce9ff;line-height:1.1;
+    font-variant-numeric:tabular-nums}
+  .rit span{display:block;margin-top:3px;font-size:8.5px;color:var(--dim2);letter-spacing:.08em}
+  .rrows{margin-top:9px;display:flex;flex-direction:column;gap:6px}
+  .rr{font-size:10px;color:#b9cbe6}
+  .rr .t{display:flex;justify-content:space-between;letter-spacing:.04em;gap:8px}
+  .rr .t b{color:#dce9ff;font-weight:400;font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .rr .track{height:3px;border-radius:3px;background:rgba(255,255,255,.07);margin-top:4px;overflow:hidden}
+  .rr .track i{display:block;height:100%;border-radius:3px;background:currentColor;
+    box-shadow:0 0 8px currentColor;transition:width .6s ease}
+
+  /* ── 底部活动条 ── */
+  .hud-bottom{position:fixed;z-index:6;left:calc(var(--edge) + env(safe-area-inset-left,0px));
+    bottom:calc(var(--edge) + env(safe-area-inset-bottom,0px));width:calc(100% - var(--edge) * 2);
+    max-width:520px}
+  .actbars{display:flex;align-items:flex-end;gap:5px;height:52px}
+  .ab{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
+    gap:3px;cursor:pointer;height:100%}
+  .ab i{display:block;width:100%;border-radius:2px 2px 0 0;
+    background:linear-gradient(180deg,rgba(127,200,255,.85),rgba(127,200,255,.12));
+    box-shadow:0 0 10px rgba(90,160,255,.25);transition:filter .16s;min-height:2px}
+  .ab:hover i{filter:brightness(1.45)}
+  .ab span{font-size:8px;color:var(--dim2);letter-spacing:.02em;font-variant-numeric:tabular-nums}
+  .actfoot{margin-top:6px;font-size:9.5px;color:var(--dim2);letter-spacing:.04em;line-height:1.6}
+  .actfoot b{color:#9fb6da;font-weight:500}
+
+  /* ── 归位按钮：跑偏/放大后才出现 ── */
+  .home-btn{position:fixed;z-index:7;right:calc(var(--edge) + env(safe-area-inset-right,0px));
+    bottom:calc(96px + env(safe-area-inset-bottom,0px));
+    padding:7px 12px;border-radius:999px;border:1px solid var(--line);
+    background:rgba(8,12,22,.86);color:#bcd0ea;font-size:10.5px;letter-spacing:.12em;
+    font-family:inherit;line-height:1;cursor:pointer;
+    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+    opacity:0;transform:translateY(6px);pointer-events:none;
+    transition:opacity .2s ease,transform .2s ease;
+    -webkit-tap-highlight-color:transparent}
+  .home-btn.on{opacity:.92;transform:none;pointer-events:auto}
+  .home-btn:active{background:rgba(20,30,52,.94)}
+
+  /* ── 详情卡 ── */
+  .card{position:fixed;left:50%;transform:translate(-50%,14px);
+    bottom:calc(96px + env(safe-area-inset-bottom,0px));
+    width:min(var(--card-w),calc(100vw - 40px));z-index:8;
+    background:rgba(9,14,26,.93);border:1px solid rgba(127,200,255,.28);border-radius:13px;
+    backdrop-filter:blur(16px);padding:14px 15px 13px;box-shadow:0 14px 48px rgba(0,0,0,.65);
+    opacity:0;pointer-events:none;transition:.22s}
+  .card.on{transform:translate(-50%,0);opacity:1;pointer-events:auto}
+  .card .top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .card .tag{font-size:10px;letter-spacing:.1em;padding:2px 8px;border-radius:20px;
+    border:1px solid currentColor;opacity:.95}
+  .card .dt{font-size:10.5px;color:var(--dim);margin-left:auto;font-variant-numeric:tabular-nums}
+  .card .txt{font-size:12.5px;line-height:1.72;color:#dbe7fa;max-height:32vh;overflow:auto;
+    white-space:pre-wrap;word-break:break-word}
+  .card .ev{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line);
+    font-size:11px;line-height:1.65;color:#8fa3c4}
+  .card .ev em{font-style:normal;color:#6d7f9f}
+  .card .x{position:absolute;top:9px;right:10px;width:20px;height:20px;border-radius:6px;
+    display:none;align-items:center;justify-content:center;cursor:pointer;color:var(--dim);
+    font-size:15px;line-height:1}
+  .card.on .x{display:flex}
+  .card .x:hover{background:rgba(255,255,255,.08);color:#fff}
+
+  /* ── 加载 ── */
+  .boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px;background:var(--bg);z-index:20;transition:opacity .5s}
+  .boot.off{opacity:0;pointer-events:none}
+  .boot .ring2{width:44px;height:44px;border-radius:50%;border:2px solid rgba(127,200,255,.18);
+    border-top-color:var(--fact);animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .boot .m{font-size:12.5px;color:var(--dim);letter-spacing:.12em}
+  .boot .err{color:#ff8f8f;font-size:12px;max-width:80vw;text-align:center;line-height:1.7}
+
+  /* ── 断点 ── */
+  /* 窄屏：只留记忆构成卡（可收成小标签），其余 HUD 收掉 */
+  @media(max-width:900px){
+    :root{--edge:12px;--h1:15px;--ui:11px;--card-w:340px}
+    .hud-left{top:92px;width:min(240px,calc(100vw - 24px))}
+    .hud-right,.hud-bottom{display:none}
+    .nav-card{display:none}
+    .counts .c:nth-child(n+3){display:none}
+    .clock{display:none}
+    .card{bottom:calc(20px + env(safe-area-inset-bottom,0px))}
+    /* 手机：归位放左上角，避开底部详情卡 */
+    .home-btn{right:auto;bottom:auto;left:calc(var(--edge) + env(safe-area-inset-left,0px));
+      top:calc(66px + env(safe-area-inset-top,0px));padding:6px 10px}
+  }
+  @media(max-width:400px){
+    :root{--edge:10px;--h1:14px}
+    .hd .sub{font-size:9.5px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;
+      -webkit-box-orient:vertical;overflow:hidden}
+    .counts{gap:10px}
+    .counts .c b{font-size:12.5px}
+    .counts .c span{font-size:8.5px}
+    .card .txt{max-height:38vh}
+  }
+  @media(min-width:1440px){
+    :root{--edge:26px;--hud-w:316px;--h1:19px;--ui:12px;--card-w:420px}
+    .hud-left,.hud-right{top:112px}
+    #minimap{height:146px}
+  }
+  /* 矮窗口：上下让位，别压住星图 */
+  @media(max-height:700px){
+    .hud-left,.hud-right{top:88px;max-height:calc(100dvh - 120px)}
+    .hud-bottom{display:none}
+  }
+  @media(max-height:520px){
+    .hd .sub{display:none}
+    .hud-left,.hud-right{display:none}
+    .card .txt{max-height:30vh}
+  }
+  @media(pointer:coarse){
+    .lg{padding:7px 5px}
+    .srow{padding:7px 5px}
+    .search{font-size:13px;height:28px}
+    .card .x{width:28px;height:28px;font-size:17px;top:6px;right:7px}
+  }
+  @supports (-webkit-touch-callout:none){
+    @media(pointer:coarse){.search{font-size:16px;line-height:1;padding:0 8px;height:28px}}
+  }
+
+  /* ── 窄屏：右侧抽屉（人格内核 / 认知流 / 记忆活跃）── */
+  .drawer-tab{display:none}
+  @media(max-width:900px){
+    .drawer-tab{display:flex;position:fixed;z-index:8;right:0;top:42%;
+      transform:translateY(-50%);writing-mode:vertical-rl;letter-spacing:.2em;
+      padding:15px 6px;border-radius:10px 0 0 10px;border:1px solid var(--line);border-right:none;
+      background:rgba(8,12,22,.82);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+      color:#bcd0ea;font-size:10px;font-family:inherit;line-height:1;cursor:pointer;
+      -webkit-tap-highlight-color:transparent;
+      transition:transform .26s ease,opacity .26s ease}
+    .drawer-tab:active{background:rgba(20,30,52,.9)}
+    body.drawer-open .drawer-tab{opacity:0;transform:translate(120%,-50%);pointer-events:none}
+
+    .hud-right{display:flex;position:fixed;z-index:9;right:0;top:0;bottom:0;
+      width:min(300px,84vw);max-height:none;
+      padding:calc(50px + env(safe-area-inset-top,0px)) 12px calc(14px + env(safe-area-inset-bottom,0px));
+      overflow:hidden auto;overscroll-behavior:contain;
+      -webkit-overflow-scrolling:touch;touch-action:pan-y;
+      transform:translateX(106%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+      background:linear-gradient(180deg,rgba(4,7,14,.95),rgba(4,7,14,.88));
+      border-left:1px solid var(--line);box-shadow:-18px 0 44px rgba(0,0,0,.55);
+      -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+    .hud-right.open{transform:translateX(0)}
+    /* 记忆活跃条跟着搬进抽屉 */
+    .hud-right .hud-bottom{display:block;position:static;left:auto;bottom:auto;
+      width:auto;max-width:none;margin-top:2px}
+    /* 抽屉里整列一起滚，认知流不再单独截断 */
+    /* 认知流：卡片里自己滚，别指望整列一起滚（手指一压就被列滚带走） */
+    .hud-right .stream{flex:0 0 auto;max-height:min(42vh,320px)}
+    .hud-right .stream-body{max-height:none;flex:1 1 auto;min-height:0;
+      overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+
+    /* 抽屉里的关闭键 */
+    body.drawer-open .drawer-close{display:flex;position:fixed;z-index:10;
+      right:14px;top:calc(12px + env(safe-area-inset-top,0px));
+      width:30px;height:30px;align-items:center;justify-content:center;border-radius:8px;
+      border:1px solid var(--line);background:rgba(12,18,32,.92);color:#c6d6ee;
+      font-size:17px;line-height:1;font-family:inherit;cursor:pointer;
+      -webkit-tap-highlight-color:transparent}
+  }
+  .drawer-close{display:none}
+
+  /* ── 窄屏：左侧抽屉（记忆构成）── */
+  .left-tab,.left-close{display:none}
+  @media(max-width:900px){
+    .left-tab{display:flex;position:fixed;z-index:8;left:0;top:42%;
+      transform:translateY(-50%);writing-mode:vertical-rl;letter-spacing:.2em;
+      padding:15px 6px;border-radius:0 10px 10px 0;border:1px solid var(--line);border-left:none;
+      background:rgba(8,12,22,.82);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+      color:#bcd0ea;font-size:10px;font-family:inherit;line-height:1;cursor:pointer;
+      -webkit-tap-highlight-color:transparent;
+      transition:transform .26s ease,opacity .26s ease}
+    .left-tab:active{background:rgba(20,30,52,.9)}
+    body.left-open .left-tab{opacity:0;transform:translate(-120%,-50%);pointer-events:none}
+
+    .hud-left{display:flex;position:fixed;z-index:9;left:0;top:0;bottom:0;height:auto;
+      width:min(246px,72vw);max-height:none;
+      padding:calc(50px + env(safe-area-inset-top,0px)) 12px calc(14px + env(safe-area-inset-bottom,0px));
+      overflow:hidden auto;overscroll-behavior:contain;
+      -webkit-overflow-scrolling:touch;touch-action:pan-y;
+      transform:translateX(-106%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+      /* 抽屉本身不铺底色：只让卡片自己那块有底，别把整页蒙住 */
+      background:transparent;
+      border-right:none;box-shadow:none}
+    .hud-left.open{transform:translateX(0)}
+    /* 抽屉里不再收成胶囊，收起交给左上角的 × */
+    #panel .ch{cursor:default}
+    #panel .ch .chev{display:none}
+    #panel.collapsed{width:auto;padding:11px 12px 12px;border-radius:11px}
+    #panel.collapsed .ch{margin-bottom:9px}
+    #panel.collapsed .ch em,#panel.collapsed .ch i{display:inline}
+    #panel.collapsed .pbody{display:block}
+
+    body.left-open .left-close{display:flex;position:fixed;z-index:10;
+      left:14px;top:calc(12px + env(safe-area-inset-top,0px));
+      width:30px;height:30px;align-items:center;justify-content:center;border-radius:8px;
+      border:1px solid var(--line);background:rgba(12,18,32,.92);color:#c6d6ee;
+      font-size:17px;line-height:1;font-family:inherit;cursor:pointer;
+      -webkit-tap-highlight-color:transparent}
+  }
+</style>
+</head>
+<body>
+<div id="bgv"><video id="bgvid" muted playsinline preload="auto" disablepictureinpicture>
+  <source src="assets/starmap_bg.webm" type="video/webm">
+  <source src="assets/starmap_bg.mp4" type="video/mp4">
+</video></div>
+<canvas id="stage"></canvas>
+<div class="vignette"></div>
+
+<header class="hd">
+  <div class="brand">
+    <span class="mark">◈</span>
+    <div>
+      <h1>记忆星图 <span>· Memory StarMap</span></h1>
+      <div class="sub" id="sub">正在唤醒星云…</div>
+    </div>
+  </div>
+  <div class="counts" id="counts"></div>
+  <div class="clock"><b id="clock">--:--:--</b><span>UTC+8</span></div>
+</header>
+
+<aside class="hud-left">
+  <section class="card2 nav-card">
+    <div class="ch"><span class="cn">皮层导航</span><em>Cortical Nav</em><i>SYNC</i></div>
+    <canvas id="minimap"></canvas>
+    <div class="navfoot"><span>俯视 · XZ 平面</span><span id="navstat">—</span></div>
+  </section>
+
+  <section class="card2 fade-card" id="fadeCard">
+    <div class="ch" id="fadeHead" role="button" tabindex="0" aria-expanded="true" aria-controls="fadeBody">
+      <span class="cn">记忆褪色</span><em>Fade</em><i id="fadeTag">—</i>
+      <span class="chev" aria-hidden="true">▾</span>
+    </div>
+    <div id="fadeBody">
+      <div class="fade-bars" id="fadeBars"></div>
+      <div class="fade-foot" id="fadeFoot">正在称重…</div>
+      <div class="fade-list" id="fadeList"></div>
+    </div>
+  </section>
+
+  <section class="card2" id="panel">
+    <div class="ch" id="panelHead" role="button" tabindex="0" aria-expanded="true" aria-controls="panelBody">
+      <span class="cn">记忆构成</span><em>Memory Mix</em><i id="mixTotal">—</i>
+      <span class="chev" id="panelChev" aria-hidden="true">▾</span>
+    </div>
+    <div class="pbody" id="panelBody">
+      <div class="mixbar" id="mixbar"></div>
+      <div id="legend"></div>
+      <div class="sep"></div>
+      <input id="q" class="search" placeholder="搜一条记忆…" />
+      <div class="sep"></div>
+      <div class="lg" id="breathRow">
+        <i class="dot" style="color:#9fe6c8"></i>
+        <span class="nm">呼吸动效</span>
+        <span class="ct" id="breathState">开</span>
+      </div>
+    </div>
+  </section>
+</aside>
+
+<aside class="hud-right">
+  <section class="card2">
+    <div class="ch"><span class="cn">人格内核</span><em>Persona Core</em><i>READ-ONLY</i></div>
+    <div class="prow">
+      <div class="ringwrap">
+        <canvas id="ring" width="192" height="192"></canvas>
+        <div class="ringtxt"><b id="scorev">--</b><span id="scorelab">记忆指数</span></div>
+      </div>
+      <div class="pbars" id="pbars"></div>
+    </div>
+    <div class="energy">
+      <div class="eh"><span>能量</span><em>Energy</em><b id="energyv">--</b></div>
+      <div class="ebar"><i id="efill" style="width:0%"></i></div>
+      <div class="ecap" id="ecap">—</div>
+    </div>
+    <div class="trait">
+      <div class="tt"><span>记忆特质</span><em>Traits</em></div>
+      <canvas id="radar" width="440" height="208"></canvas>
+    </div>
+  </section>
+
+  <section class="card2 stream">
+    <div class="ch"><span class="cn">认知流</span><em>Cognitive Stream</em><i class="live">LIVE</i></div>
+    <div class="stream-body" id="stream"></div>
+  </section>
+
+  <section class="card2 retr">
+    <div class="ch"><span class="cn">检索内核</span><em>Retrieval</em><i id="retrAt">—</i></div>
+    <div class="rgrid">
+      <div class="rit"><b id="retrCold">—</b><span>冷档案·篇</span></div>
+      <div class="rit"><b id="retrDream">—</b><span>结论库·篇</span></div>
+      <div class="rit"><b id="retrChunk">—</b><span>向量块</span></div>
+    </div>
+    <div class="rrows" id="retrRows"></div>
+  </section>
+</aside>
+
+<button class="home-btn" id="homeBtn" type="button" aria-label="回到星图中心">归位</button>
+<button class="left-tab" id="leftTab" type="button" aria-label="展开记忆构成" aria-expanded="false">记忆</button>
+<button class="left-close" id="leftClose" type="button" aria-label="收起记忆构成">×</button>
+<button class="drawer-tab" id="drawerTab" type="button" aria-label="展开右侧面板" aria-expanded="false">面板</button>
+<button class="drawer-close" id="drawerClose" type="button" aria-label="收起面板">×</button>
+
+<div class="hud-bottom">
+  <div class="card2">
+    <div class="ch"><span class="cn">记忆活跃</span><em>Memory Activity</em><i id="actspan">—</i></div>
+    <div class="actbars" id="activity"></div>
+    <div class="actfoot" id="foot"></div>
+  </div>
+</div>
+
+<div class="card" id="card">
+  <div class="x" id="cx">×</div>
+  <div class="top"><span class="tag" id="ctag"></span><span class="dt" id="cday"></span></div>
+  <div class="txt" id="ctxt"></div>
+  <div class="ev" id="cev" style="display:none"></div>
+</div>
+
+<div class="boot" id="boot">
+  <div class="ring2"></div>
+  <div class="m">正在读记忆…</div>
+  <div class="err" id="berr"></div>
+</div>
+
+<script src="app.js?v=20261107-1312"></script>
+<!-- css-only: 侧边把手对齐 + 抽屉内滚 20261030-2318 -->
+</body>
+</html>

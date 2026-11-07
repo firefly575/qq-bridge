@@ -1757,6 +1757,7 @@ button:active:not(:disabled) {
       <button data-view="social-v2" class="nav-item"><span class="nav-icon" aria-hidden="true">◈</span>DeepSeek娘聊天<span class="nav-note">V2</span></button>
       <button data-view="media" class="nav-item"><span class="nav-icon" aria-hidden="true">▦</span>生成能力<span class="nav-note">图/视频</span></button>
       <button data-view="slang" class="nav-item"><span class="nav-icon" aria-hidden="true">▤</span>词汇新增</button>
+      <button data-view="starmap" class="nav-item"><span class="nav-icon" aria-hidden="true">✦</span>记忆星图<span class="nav-note">星图</span></button>
       <div class="nav-label">管理</div>
       <button data-view="usage" class="nav-item"><span class="nav-icon" aria-hidden="true">◧</span>令牌与花费</button>
       <button data-view="access" class="nav-item"><span class="nav-icon" aria-hidden="true">⊙</span>访问与安全</button>
@@ -2325,7 +2326,40 @@ button:active:not(:disabled) {
       </table>
       <div class="meta" style="margin-top:10px">DeepSeek娘聊天模式工具：qq_get_prompt / qq_get_unread_messages / qq_get_recent_messages / qq_social_state / qq_send_burst / qq_send_message / qq_wait_for_messages / qq_set_wake_config / qq_mark_read / qq_memory_* / qq_slang_query 等。</div>
     </section>
-<section id="section-whitelist" data-page="access" class="card span-all">
+<div class="card span-all" data-page="starmap" hidden>
+      <h2>记忆星图</h2>
+      <div class="meta" style="margin-bottom:10px">
+        星图由 <code>memory-starmap</code> 构建：每条记忆一颗星、真实关系一根线、每天一个日期星。
+        数据来源是桥接本地状态（各会话最近消息 + 话题 / 想法 / 印象），不读 DSH 会话内容。
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <label style="margin:0">视图</label>
+        <select id="starmapNs" style="min-width:240px"></select>
+        <button id="starmapBuild">构建 / 重新构建</button>
+        <button id="starmapReload" class="ghost">刷新画面</button>
+        <span id="starmapStatus" class="meta">未加载</span>
+      </div>
+      <div id="starmapFrameWrap" style="margin-top:12px;border:1px solid rgba(0,0,0,.08);border-radius:12px;overflow:hidden;background:#05060a">
+        <iframe id="starmapFrame" title="记忆星图" style="width:100%;height:66vh;border:0;display:block"></iframe>
+      </div>
+    </div>
+
+    <div class="card span-all" data-page="starmap" hidden>
+      <h2>记忆分组（哪些会话共用一份记忆）</h2>
+      <div class="meta" style="margin-bottom:10px">
+        默认每个会话的记忆各自独立。把几个会话放进同一个分组，它们就共享一份记忆空间（<code>state/memory-groups.json</code>），星图也会合并展示。
+        分组只影响桥接侧的轻量记忆与星图；DSH 的对话上下文仍按会话隔离。
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <input type="text" id="memGroupName" placeholder="分组名称，如：家人" style="max-width:220px">
+        <button id="memGroupAdd">新建分组</button>
+        <span id="memGroupStatus" class="meta"></span>
+      </div>
+      <div id="memCandidateWrap" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px"></div>
+      <div id="memGroupList" style="margin-top:14px"></div>
+    </div>
+
+    <section id="section-whitelist" data-page="access" class="card span-all">
       <h2>白名单 / 管理员</h2>
       <label>允许的群号（逗号分隔）</label>
       <input type="text" id="wlGroups" placeholder="123456789, 123456">
@@ -4187,6 +4221,7 @@ const consolePages = {
   'social-v2': ['DeepSeek娘聊天', '自主参与，恰到好处。', '管理 AI 的工具、唤醒与发言节奏。展开需要调整的分组，修改后保存参数。'],
   media: ['生成能力', '画一张，还是拍一段。', '管理画图与视频的后端、分辨率或尺寸、时长和每日额度；保存后立即生效。'],
   slang: ['词汇新增', '读懂群聊里的，言外之意。', '从候选到确认，让 AI 逐渐熟悉大家的表达习惯。'],
+  starmap: ['记忆星图', '把记忆摊开成一张可以漫游的星图。', '每个会话默认独立记忆；在这里把几个会话绑成一组共享记忆，并构建三维星图。'],
   usage: ['令牌与花费', '每一次思考，都算得清楚。', '实时查看 AI 的 token 消耗与花费，可下钻到每个群、每个好友、每一轮对话。'],
   access: ['访问与安全', '明确边界，安心连接。', '管理允许对话的对象、管理员权限与控制台访问凭证。'],
   operations: ['调试与运维', '让桥接，始终井然有序。', '测试消息、引导 AI，或维护桥接进程与会话工作区。'],
@@ -4201,6 +4236,139 @@ function showConsoleToast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 4200);
 }
+// ── 记忆星图页 ───────────────────────────────────────────────
+let starmapState = { namespaces: [], current: '', token: '' };
+let memGroups = { groups: [], candidates: [] };
+
+async function loadStarmapPage() {
+  const sel = document.getElementById('starmapNs');
+  if (!sel) return;
+  try {
+    const data = await api('/api/starmap', 'GET');
+    starmapState = data;
+    sel.innerHTML = '';
+    for (const ns of data.namespaces) {
+      const opt = document.createElement('option');
+      opt.value = ns.ns;
+      opt.textContent = `${ns.name}（${ns.nodes} 星 / ${ns.days} 天）`;
+      sel.appendChild(opt);
+    }
+    const prefer = starmapState.current || sel.options[0]?.value || '';
+    if (prefer) { sel.value = prefer; await showStarmap(prefer); }
+    await loadMemoryGroups();
+  } catch (error) {
+    document.getElementById('starmapStatus').textContent = '加载失败：' + (error?.message ?? error);
+  }
+}
+
+async function showStarmap(ns, { rebuild = false } = {}) {
+  const status = document.getElementById('starmapStatus');
+  const frame = document.getElementById('starmapFrame');
+  if (!ns) return;
+  if (rebuild) {
+    status.textContent = '构建中…（点数多时需要 1~3 分钟）';
+    try {
+      const res = await api('/api/starmap/build', 'POST', { ns });
+      if (!res.ok) { status.textContent = '构建失败：' + (res.error || '未知错误'); return; }
+      status.textContent = `已构建：${res.nodes} 星 / ${res.links} 线 / ${res.days} 天（${res.items} 条记忆）`;
+    } catch (error) {
+      status.textContent = '构建失败：' + (error?.message ?? error);
+      return;
+    }
+  }
+  const [, dir] = /^(.*):(.*)$/.exec(ns) ? [null, ns.replace(/^([^:]+):.*$/, '$1'), ns.replace(/^[^:]+:/, '')] : [null, ns, ''];
+  const safeDir = (ns === dir ? ns : ns).replace(/[^A-Za-z0-9._-]+/g, '_');
+  const token = encodeURIComponent(starmapState.token || localStorage.getItem('consoleToken') || '');
+  frame.src = `/starmap/${token}/${safeDir}/index.html`;
+  if (!rebuild) status.textContent = '已加载（若显示空白，先点「构建 / 重新构建」）';
+}
+
+async function loadMemoryGroups() {
+  const list = document.getElementById('memGroupList');
+  const candWrap = document.getElementById('memCandidateWrap');
+  if (!list) return;
+  const data = await api('/api/memory-groups', 'GET');
+  memGroups = data;
+  list.innerHTML = '';
+  candWrap.innerHTML = '';
+
+  for (const c of data.candidates) {
+    const label = document.createElement('label');
+    label.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid rgba(0,0,0,.12);border-radius:999px;font-size:12px';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'mem-cand';
+    box.value = c.key;
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(c.key));
+    candWrap.appendChild(label);
+  }
+
+  if (!data.groups.length) {
+    const empty = document.createElement('div');
+    empty.className = 'meta';
+    empty.textContent = '还没有分组：勾选上面的会话，填个名字，点「新建分组」。';
+    list.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse';
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th style="text-align:left;padding:6px">分组</th><th style="text-align:left;padding:6px">成员</th><th style="padding:6px">操作</th></tr>';
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const g of data.groups) {
+    const tr = document.createElement('tr');
+    tr.style.borderTop = '1px solid rgba(0,0,0,.06)';
+    const td1 = document.createElement('td');
+    td1.style.padding = '6px';
+    td1.textContent = `${g.name}（${g.id}）`;
+    const td2 = document.createElement('td');
+    td2.style.padding = '6px';
+    td2.textContent = g.members.join('、') || '（空）';
+    const td3 = document.createElement('td');
+    td3.style.cssText = 'padding:6px;text-align:center';
+    const del = document.createElement('button');
+    del.className = 'ghost';
+    del.textContent = '删除';
+    del.addEventListener('click', async () => {
+      const next = memGroups.groups.filter((x) => x.id !== g.id).map((x) => ({ id: x.id, name: x.name, members: x.members }));
+      await api('/api/memory-groups', 'POST', { groups: next });
+      await loadMemoryGroups();
+    });
+    td3.appendChild(del);
+    tr.append(td1, td2, td3);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  list.appendChild(table);
+}
+
+document.getElementById('starmapNs')?.addEventListener('change', (e) => showStarmap(e.target.value));
+document.getElementById('starmapBuild')?.addEventListener('click', () => {
+  const ns = document.getElementById('starmapNs')?.value;
+  if (ns) showStarmap(ns, { rebuild: true });
+});
+document.getElementById('starmapReload')?.addEventListener('click', () => {
+  const ns = document.getElementById('starmapNs')?.value;
+  if (ns) showStarmap(ns);
+});
+document.getElementById('memGroupAdd')?.addEventListener('click', async () => {
+  const name = (document.getElementById('memGroupName')?.value || '').trim();
+  const members = [...document.querySelectorAll('.mem-cand:checked')].map((el) => el.value);
+  const status = document.getElementById('memGroupStatus');
+  if (!name) { status.textContent = '先填分组名称'; return; }
+  if (!members.length) { status.textContent = '至少勾选一个会话'; return; }
+  const id = 'g' + Date.now().toString(36);
+  const next = [...memGroups.groups.map((g) => ({ id: g.id, name: g.name, members: g.members })), { id, name, members }];
+  await api('/api/memory-groups', 'POST', { groups: next });
+  status.textContent = `已创建「${name}」`;
+  document.getElementById('memGroupName').value = '';
+  await loadMemoryGroups();
+  await loadStarmapPage();
+});
+
 // ── 用户权限表（访问与安全页）────────────────────────────────
 let permModel = { caps: [], labels: {}, defaults: {}, users: [] };
 
@@ -4373,6 +4541,7 @@ function setConsolePage(page, { updateHash = true, focus = false, target = '' } 
   if (page === 'social-v2' && typeof loadVoiceLibrary === 'function') loadVoiceLibrary();
   if (page === 'media' && typeof loadMediaSettings === 'function') loadMediaSettings();
   if (page === 'access' && typeof loadPermissions === 'function') loadPermissions();
+  if (page === 'starmap' && typeof loadStarmapPage === 'function') loadStarmapPage();
   if (focus) {
     document.getElementById('mainContent').focus({ preventScroll: true });
     document.getElementById(target || 'mainContent')?.scrollIntoView({ block: 'start', behavior: 'instant' });
