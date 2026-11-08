@@ -4276,11 +4276,51 @@ async function showStarmap(ns, { rebuild = false } = {}) {
       return;
     }
   }
-  const [, dir] = /^(.*):(.*)$/.exec(ns) ? [null, ns.replace(/^([^:]+):.*$/, '$1'), ns.replace(/^[^:]+:/, '')] : [null, ns, ''];
-  const safeDir = (ns === dir ? ns : ns).replace(/[^A-Za-z0-9._-]+/g, '_');
-  const token = encodeURIComponent(starmapState.token || localStorage.getItem('consoleToken') || '');
-  frame.src = `/starmap/${token}/${safeDir}/index.html`;
-  if (!rebuild) status.textContent = '已加载（若显示空白，先点「构建 / 重新构建」）';
+
+  // 目录名与 scripts/build-starmap.mjs 的 nsDirName 保持一致
+  const safeDir = String(ns).replace(/[^A-Za-z0-9._-]+/g, '_');
+  const token = starmapState.token || localStorage.getItem('consoleToken') || '';
+  const url = '/starmap/' + encodeURIComponent(token) + '/' + safeDir + '/index.html';
+
+  const load = (label) => {
+    frame.src = url + '?t=' + Date.now();   // cache-buster：重启后也能拿到新页面
+    if (!rebuild) status.textContent = label || '加载中…';
+  };
+
+  // 看门狗：iframe 与页面同源，可以直接读它的 document 判断是不是错误页
+  const probe = () => {
+    try {
+      const doc = frame.contentDocument;
+      if (!doc) return 'blank';
+      const title = (doc.title || '').trim();
+      if (!title || /拒绝连接|refused|无法访问|can't be reached/i.test(title + doc.body?.innerText || '')) return 'error';
+      return 'ok';
+    } catch { return 'unknown'; }
+  };
+
+  load('加载中…');
+  let tries = 0;
+  const tick = () => {
+    tries++;
+    const state = probe();
+    if (state === 'ok') {
+      status.textContent = `已加载：${safeDir}`;
+      return;
+    }
+    if (tries === 1) { load('重新加载…'); setTimeout(tick, 1500); return; }
+    if (tries === 2) { load('再试一次…'); setTimeout(tick, 2500); return; }
+    status.innerHTML = '';
+    const span = document.createElement('span');
+    span.textContent = '星图加载失败（可能是桥接刚好重启）。点这里手动打开：';
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = '在新标签打开星图';
+    a.style.marginLeft = '6px';
+    status.append(span, a);
+  };
+  setTimeout(tick, 1200);
 }
 
 async function loadMemoryGroups() {

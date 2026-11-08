@@ -3224,7 +3224,10 @@ function startConsoleServer() {
             const b = Buffer.from(consoleToken, 'utf8');
             return a.length === b.length && crypto.timingSafeEqual(a, b);
           })();
-          if (!okToken) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); res.end('forbidden'); return; }
+          if (!okToken) {
+            log(`[starmap] 静态请求被拒（token 不匹配）：${url.pathname.slice(0, 80)}`);
+            res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); res.end('forbidden'); return;
+          }
           const dirName = String(parts[2] ?? '').replace(/[^A-Za-z0-9._-]/g, '');
           const rel = parts.slice(3).join('/') || 'index.html';
           const safeRel = rel.replace(/\.\./g, '').replace(/^\/+/, '');
@@ -3233,7 +3236,11 @@ function startConsoleServer() {
             path.join(ROOT, 'vendor', 'memory-starmap', 'web', safeRel)
           ];
           const found = candidates.find((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
-          if (!found) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('not found'); return; }
+          if (!found) {
+            log(`[starmap] 静态请求 404：dir=${dirName} file=${safeRel}`);
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('not found'); return;
+          }
+          log(`[starmap] 静态请求 OK：${dirName}/${safeRel}`);
           const ext = path.extname(found).toLowerCase();
           const types = {
             '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
