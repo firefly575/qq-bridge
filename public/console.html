@@ -1808,7 +1808,7 @@ button:active:not(:disabled) {
       <h2>活动日志（最近 100 条）</h2>
       <pre id="activity">（空）</pre>
     </section>
-<section id="section-persona" <div class="card span-all" data-page="persona" hidden>
+<div class="card span-all" data-page="persona" hidden>
       <h2>按会话分配人格（可同时使用多张人格卡）</h2>
       <div class="meta" style="margin-bottom:10px">
         默认所有人都用下面选的「默认人格」；想给某些人/群换人格，就在表格里单独指定。
@@ -1823,7 +1823,7 @@ button:active:not(:disabled) {
       <div id="roleAssignTable" style="margin-top:12px;overflow:auto"></div>
     </div>
 
-data-page="persona" class="card span-all">
+    <section id="section-persona" data-page="persona" class="card span-all">
       <h2>人格与角色</h2>
       <div class="meta">当前人格：<span id="roleText">-</span> ｜ 状态：<span id="roleModeText">-</span></div>
 
@@ -2396,8 +2396,9 @@ data-page="persona" class="card span-all">
     <div class="card span-all" data-page="access">
       <h2>用户权限（按会话勾选 · 可批量）</h2>
       <div class="meta" style="margin-bottom:10px">
-        给每个私聊/群单独开关能力：<b>聊天</b>（关掉后消息直接忽略）、<b>图片生成</b>、<b>视频生成</b>、<b>翻唱</b>、<b>语音回答</b>、<b>表情包</b>。
-        管理员（ownerQQ）恒为全开，不可修改。改动保存到 <code>state/permissions.json</code>，立即生效。
+        给每个私聊/群单独开关能力：<b>聊天</b>（关掉后消息直接忽略）、<b>图片生成</b>、<b>视频生成</b>、<b>翻唱</b>、<b>语音回答</b>、<b>表情包</b>、<b>记忆星图</b>。
+        <b>敏感词过滤</b>在「会话」右边第一列：勾选=过滤，取消=这个会话不过滤（成人/链接/路径都放行；管理员默认不过滤）。
+        管理员（ownerQQ）的能力恒为全开，不可修改。改动保存到 <code>state/permissions.json</code>，立即生效。表格较宽时可在区域内左右滚动。
       </div>
       <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">
         <button id="permSelectAll" class="ghost">全选行</button>
@@ -4580,16 +4581,16 @@ function renderPermTable() {
   thUser.textContent = '会话';
   thUser.style.cssText = 'text-align:left;padding:6px 8px';
   hr.appendChild(thUser);
-  for (const cap of caps) {
-    const th = document.createElement('th');
-    th.textContent = labels[cap] ?? cap;
-    th.style.cssText = 'padding:6px 8px;white-space:nowrap';
-    hr.appendChild(th);
-  }
   {
     const th = document.createElement('th');
     th.textContent = '敏感词过滤';
     th.title = '勾选=过滤（默认）；取消勾选=这个会话不过滤（成人/链接/路径都放行）';
+    th.style.cssText = 'padding:6px 8px;white-space:nowrap;background:rgba(255,196,0,.12)';
+    hr.appendChild(th);
+  }
+  for (const cap of caps) {
+    const th = document.createElement('th');
+    th.textContent = labels[cap] ?? cap;
     th.style.cssText = 'padding:6px 8px;white-space:nowrap';
     hr.appendChild(th);
   }
@@ -4617,6 +4618,17 @@ function renderPermTable() {
     if (user.owner) tdUser.style.fontWeight = '600';
     tr.appendChild(tdUser);
 
+    {
+      const td = document.createElement('td');
+      td.style.cssText = 'padding:6px 8px;text-align:center;background:rgba(255,196,0,.06)';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.dataset.permSensitive = '1';
+      box.dataset.key = user.key;
+      box.checked = user.sensitive !== false;
+      td.appendChild(box);
+      tr.appendChild(td);
+    }
     for (const cap of caps) {
       const td = document.createElement('td');
       td.style.cssText = 'padding:6px 8px;text-align:center';
@@ -4626,17 +4638,6 @@ function renderPermTable() {
       box.dataset.key = user.key;
       box.checked = user.perms?.[cap] !== false;
       if (user.owner) { box.disabled = true; box.checked = true; }
-      td.appendChild(box);
-      tr.appendChild(td);
-    }
-    {
-      const td = document.createElement('td');
-      td.style.cssText = 'padding:6px 8px;text-align:center';
-      const box = document.createElement('input');
-      box.type = 'checkbox';
-      box.dataset.permSensitive = '1';
-      box.dataset.key = user.key;
-      box.checked = user.sensitive !== false;
       td.appendChild(box);
       tr.appendChild(td);
     }
