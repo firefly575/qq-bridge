@@ -35,7 +35,7 @@
 
 把 QQ 消息接入 DSH agent：QQ 好友/群发来的消息会变成 DSH 会话里的用户消息，agent 的回复（含提问、工具审批）会发回 QQ。
 
-> ⚠️ **当前版本 `0.1.17`**（见 [package.json](package.json)），在 **DSH 0.1.7** 上逐项实测。
+> ⚠️ **当前版本 `0.1.19`**（见 [package.json](package.json)），在 **DSH 0.1.7** 上逐项实测。
 > 依赖 DSH 的 Cookie 鉴权、斜杠 RPC（`/api/<namespace>/<method>`）与 `/api/remote.mux` 事件流；这套协议自 DSH `0.1.2-alpha.1` 起引入，**与更早的点号 endpoint 协议不兼容**。
 >
 > 与上游相比的差异（一代仿真下线、默认模式 `reserved2`、新增语音/画图/视频/翻唱与「生成能力」控制台）见上文 [来源与改动](#来源与改动)。
@@ -148,6 +148,19 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
 
 三重校验：`config.admin.enabled` + 有效令牌 + 会话 key 严格等于 `private:<ownerQQ>`；群聊与他人私聊一律 403。
 每次调用写 `state/admin-audit.jsonl`（时间 / key / 操作 / 命令或路径 / 结果码）。
+
+### 内容边界（管理员例外）
+
+- 默认守内容安全：不生成色情内容、不协助违法事项。
+- **与管理员（`ownerQQ`）私聊时不做内容审查**：成人/敏感话题、脏话、链接与外部地址、本机路径、凭据样式文本都照常回应，桥接也不会拦截。
+- 群聊与非管理员私聊仍按默认边界。
+- 开关：`config.json` 的 `security.ownerBypassSensitive`（**默认 `true`**）；设为 `false` 则一视同仁地拦截。
+- 实现：出站文本的 `SENSITIVE_RE` 校验改为按会话判断（`sensitiveBlockedFor(key, text)`），非管理员仍然 403「消息含敏感信息，已阻止发送」。
+
+```
+owner 发送含路径/密钥样式文本 → 200 放行
+其他私聊发送同样文本       → 403 消息含敏感信息，已阻止发送
+```
 
 ## 前置条件
 

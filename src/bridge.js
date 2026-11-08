@@ -686,6 +686,8 @@ function loadConfig() {
     pricing: file.pricing ?? null,
     security: {
       interceptNotify: true,
+      // 管理员私聊不做敏感内容过滤（成人/敏感话题、链接、路径都放行）
+      ownerBypassSensitive: true,
       ...(file.security ?? {})
     },
     // 管理员专用：本机命令/文件/下载/安装（只有 ownerQQ 私聊可用）
@@ -4108,7 +4110,7 @@ function startConsoleServer() {
           const message = String(body.message ?? '').trim();
           if (!Number.isFinite(id) || id <= 0) { sendJson({ ok: false, error: '目标 id 无效' }, 400); return; }
           if (!message) { sendJson({ ok: false, error: '消息不能为空' }, 400); return; }
-          if (SENSITIVE_RE.test(message)) { sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403); return; }
+          if (sensitiveBlockedFor(`${kind}:${id}`, message)) { sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403); return; }
           if (!allowed(kind, id, cfg)) { sendJson({ ok: false, error: `目标不在白名单内（${kind} ${id}），请先加入白名单` }, 403); return; }
           if (!modeAllowed(`${kind}:${id}`, kind, id, cfg, currentMode)) { sendJson({ ok: false, error: `当前模式（${currentMode}）不允许向 ${kind}:${id} 发送测试消息` }, 403); return; }
           try {
@@ -5074,7 +5076,7 @@ function startConsoleServer() {
               sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400);
               return;
             }
-            if (SENSITIVE_RE.test(msg)) {
+            if (sensitiveBlockedFor(key, msg)) {
               sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403);
               return;
             }
@@ -5211,7 +5213,7 @@ function startConsoleServer() {
               sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400);
               return;
             }
-            if (SENSITIVE_RE.test(msg)) {
+            if (sensitiveBlockedFor(key, msg)) {
               sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403);
               return;
             }
@@ -7376,7 +7378,7 @@ function startConsoleServer() {
           const sendCfg = cfg.socialV2?.send ?? {};
           const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
           if (message.length > maxChars) { sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400); return; }
-          if (SENSITIVE_RE.test(message)) { sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403); return; }
+          if (sensitiveBlockedFor(key, message)) { sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403); return; }
           try {
             const st = getSocialV2State(key);
             const now = Date.now();
@@ -7639,6 +7641,20 @@ function startConsoleServer() {
   function isOwnerKey(key) {
     return key === `private:${String(cfg.ownerQQ ?? '')}` && Boolean(cfg.ownerQQ);
   }
+  // ── 管理员豁免内容拦截 ────────────────────────────────────────
+  // 默认 true：与 ownerQQ 私聊时不做敏感内容过滤（成人/敏感话题、链接、本机路径、凭据样式文本都放行）。
+  // 设 config.security.ownerBypassSensitive = false 可恢复「一视同仁地过滤」。
+  function sensitiveFilterApplies(key) {
+    if (cfg.security?.ownerBypassSensitive === false) return true;
+    return !isOwnerKey(key);
+  }
+
+  /** 该会话的这段文本是否应被拦截（仅非管理员） */
+  function sensitiveBlockedFor(key, text) {
+    if (!sensitiveFilterApplies(key)) return false;
+    return SENSITIVE_RE.test(String(text ?? ''));
+  }
+
   function errorsToOwnerOnly() {
     return cfg.security?.errorsToOwnerOnly !== false;
   }
@@ -12203,7 +12219,7 @@ function startConsoleServer() {
                 }
               } else if (ended.reason.kind === 'error') {
                 const msg = ended.reason.error?.message ?? '未知错误';
-                const safeMsg = shouldAuditKey(key) && SENSITIVE_RE.test(msg) ? '（含敏感信息，已隐藏）' : msg.slice(0, 500);
+                const safeMsg = shouldAuditKey(key) && sensitiveBlockedFor(key, msg) ? '（含敏感信息，已隐藏）' : msg.slice(0, 500);
                 log(`[error] agent 回合出错 (${key}): ${safeMsg}`);
                 await sendErrorToKey(key, `⚠️ agent 处理出错：${safeMsg}`);
                 if (isFarewell) {

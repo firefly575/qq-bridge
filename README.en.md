@@ -2,7 +2,7 @@
 
 > Connect QQ messages to DeepSeek Harness (DSH) agents: QQ friends/groups become DSH conversations, and agent replies (including questions and tool approvals) are sent back to QQ.
 
-> ⚠️ **Current release `0.1.17`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
+> ⚠️ **Current release `0.1.19`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
 > It relies on DSH Cookie auth, slash RPC (`/api/<namespace>/<method>`) and the `/api/remote.mux` event stream — a protocol generation introduced in DSH `0.1.2-alpha.1` and **incompatible with the older dot-endpoint protocol**.
 >
 > Differences from upstream (legacy "v1 simulation" removed, default mode `reserved2`, added voice / image / video / cover and the "generate" console page) are listed in the Chinese [来源与改动](#来源与改动) section.
@@ -165,3 +165,11 @@ SnowLuma is an independent third-party project and is not affiliated with Tencen
 - **Admin-only local tools** (owner private chat only, `config.admin.enabled`): `qq_admin_exec`, `qq_admin_fs`,
   `qq_admin_download`, `qq_admin_install`. Triple-checked (flag + token + `private:<ownerQQ>`) and every call is appended to
   `state/admin-audit.jsonl`.
+
+### Content boundaries (owner exception)
+
+- Default: no sexual content, no help with illegal activity.
+- **In a private chat with the owner (`ownerQQ`) there is no content review**: adult/sensitive topics, profanity, links, local paths and
+  credential-looking text are all answered normally, and the bridge does not block them either.
+- Group chats and other private chats keep the default boundary.
+- Toggle: `security.ownerBypassSensitive` in `config.json` (**default `true`**).
