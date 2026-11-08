@@ -2,7 +2,7 @@
 
 > Connect QQ messages to DeepSeek Harness (DSH) agents: QQ friends/groups become DSH conversations, and agent replies (including questions and tool approvals) are sent back to QQ.
 
-> ⚠️ **Current release `0.1.7`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
+> ⚠️ **Current release `0.1.17`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
 > It relies on DSH Cookie auth, slash RPC (`/api/<namespace>/<method>`) and the `/api/remote.mux` event stream — a protocol generation introduced in DSH `0.1.2-alpha.1` and **incompatible with the older dot-endpoint protocol**.
 >
 > Differences from upstream (legacy "v1 simulation" removed, default mode `reserved2`, added voice / image / video / cover and the "generate" console page) are listed in the Chinese [来源与改动](#来源与改动) section.
@@ -150,3 +150,18 @@ npm run test-stickers
 ## Compliance
 
 SnowLuma is an independent third-party project and is not affiliated with Tencent/QQ. This project is for learning and technical research only; please follow the relevant terms and the QQ User Agreement.
+
+## Memory StarMap & per-user permissions (since v0.1.15)
+
+- **Memory StarMap** — a dedicated console page (`✦ 记忆星图`) that renders memories as a navigable 3D star map.
+  Built on [painter-7/memory-starmap](https://github.com/painter-7/memory-starmap), vendored under `vendor/memory-starmap/` (algorithm untouched).
+  Requires Python 3.9+ and numpy (`python -m pip install numpy`). Data comes from the bridge's local state
+  (`recentMessages` / `activeTopics` / `pendingThoughts` / `memberImpressions`), never from DSH session content.
+- **Memory groups** — each conversation keeps its own memory by default; group several conversations to share one
+  memory space and one merged star map (`state/memory-groups.json`). DSH conversation context stays per-session.
+- **Per-user permissions** — the access page has a capability matrix (chat / image / video / cover / voice / sticker / starmap)
+  with batch editing (`state/permissions.json`). The owner always has everything; every permission is enforced server-side
+  (403 for disallowed calls).
+- **Admin-only local tools** (owner private chat only, `config.admin.enabled`): `qq_admin_exec`, `qq_admin_fs`,
+  `qq_admin_download`, `qq_admin_install`. Triple-checked (flag + token + `private:<ownerQQ>`) and every call is appended to
+  `state/admin-audit.jsonl`.

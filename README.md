@@ -35,7 +35,7 @@
 
 把 QQ 消息接入 DSH agent：QQ 好友/群发来的消息会变成 DSH 会话里的用户消息，agent 的回复（含提问、工具审批）会发回 QQ。
 
-> ⚠️ **当前版本 `0.1.7`**（见 [package.json](package.json)），在 **DSH 0.1.7** 上逐项实测。
+> ⚠️ **当前版本 `0.1.17`**（见 [package.json](package.json)），在 **DSH 0.1.7** 上逐项实测。
 > 依赖 DSH 的 Cookie 鉴权、斜杠 RPC（`/api/<namespace>/<method>`）与 `/api/remote.mux` 事件流；这套协议自 DSH `0.1.2-alpha.1` 起引入，**与更早的点号 endpoint 协议不兼容**。
 >
 > 与上游相比的差异（一代仿真下线、默认模式 `reserved2`、新增语音/画图/视频/翻唱与「生成能力」控制台）见上文 [来源与改动](#来源与改动)。
@@ -81,7 +81,7 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
     数据出机清单见 [LICENSE](LICENSE) 的「数据出机清单」。
 - **会话模型**：每个 QQ 会话（私聊/群）对应一个独立的 DSH 会话，统一归组到「QQ 聊天」工作区（不再散落未分组）；映射持久化在 `state/sessions.json`
 - **性格定制**：QQ 会话默认使用 `qq-chat` agent preset（`~/.dsh/.agent-presets/qq-chat/agent.cordis.yml`），`reserved2` 使用 `qq-chat-v2`（`~/.dsh/.agent-presets/qq-chat-v2/agent.cordis.yml`）；人格与默认 DSH 一致（coding agent），仅附加 QQ 场景规则；**角色扮演**是可选机制——由控制台或管理端设置 `state/current-role.json` 注入（群友无法更改）
-- **本地控制台**：桥接自带 Web 控制台 `http://127.0.0.1:3100`——左侧按操作任务分为「运行总览 / 会话与审批 / 人格与角色 / DeepSeek娘聊天 / 生成能力 / 词汇新增 / 令牌与花费 / 访问与安全 / 调试与运维 / 工具参考」十个页面，右上角搜索框可跨页定位任意功能项；支持**浅色 / 深色双主题**（顶栏一键切换，未选择时跟随系统）；切换运行模式（chat / closed-agent / reserved2）、设置角色、静默开关、查看活动日志、修改管理员/控制台令牌，全部即时生效；访问需要令牌（`config.json` 的 `consoleToken`，未配置时自动生成并打印在启动日志；控制台内可手动修改或重新生成）
+- **本地控制台**：桥接自带 Web 控制台 `http://127.0.0.1:3100`——左侧按操作任务分为「运行总览 / 会话与审批 / 人格与角色 / DeepSeek娘聊天 / 生成能力 / 词汇新增 / ✦ 记忆星图 / 令牌与花费 / 访问与安全 / 调试与运维 / 工具参考」十一个页面，右上角搜索框可跨页定位任意功能项；支持**浅色 / 深色双主题**（顶栏一键切换，未选择时跟随系统）；切换运行模式（chat / closed-agent / reserved2）、设置角色、静默开关、查看活动日志、修改管理员/控制台令牌，全部即时生效；访问需要令牌（`config.json` 的 `consoleToken`，未配置时自动生成并打印在启动日志；控制台内可手动修改或重新生成）
   - **令牌与花费看板**：实时显示 AI 的 token 消耗与折算金额（元），可下钻到**每个群 / 每个好友 / 每一轮对话**（轮次、步数、缓存命中/未命中输入、输出、命中率、花费、峰谷时段），并有**按时间的消耗走势图**（24 小时 / 3 天 / 7 天 / 30 天，柱子按高峰/空闲着色，一眼看出什么时候烧得凶、哪几个小时是 2 倍价）。累计总量取自 DSH 的 `tokenUsage` 投影（精确，含桥接启动前的历史），逐轮明细由 `assistant/message` 的 `usage` 折叠而来；金额按 DeepSeek 官方价目表折算并区分**高峰 / 空闲时段**（高峰单价为空闲的 2 倍，已内置中国法定节假日）。详见 [docs/guides/TOKEN_USAGE_CONSOLE.md](docs/guides/TOKEN_USAGE_CONSOLE.md)
   - **人格（角色扮演）管理**：列表点选即可载入查看/编辑提示词，支持新建、保存修改、改名（自动重命名文件）、另存为副本、删除；超过注入上限或含一代专用指令会实时提示
   - **两层提示词可分别查看与修改**：「仿真提示词」（预设内置，管行为与协议，保存后同步到 DSH，需重启生效）与「人格提示词」（`roles/*.md`，管人设与语气，保存即生效）；仿真层保存前做安全不变量校验与自动备份，可一键还原
@@ -99,6 +99,55 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
   - MCP 发送工具支持可选 `replyToMessageId`，并新增专用 `qq_reply` 工具：AI 可以先用 `qq_get_group_history` 拿到真实消息 id，再引用/回复某条消息（是否允许 AI 主动使用由人格/策略决定；桥接会检测发送类工具调用并自动跳过该回合的重复自动转发）
   - ~~一代仿真模式（`reserved`）下，AI 可以只输出 `[SILENT]` 表示"潜水/不接话"~~（模式已下线；`reserved2` 用 `qq_wait_for_messages` / 不发言来表示潜水）
   - ~~一代仿真模式（`reserved`）按空格分句~~（模式已下线；`reserved2` 分条请用 `qq_send_message` 数组）
+
+## 记忆星图与用户权限（v0.1.15 起）
+
+### 记忆星图（控制台独立分栏）
+
+左侧「聊天行为 → ✦ 记忆星图」把记忆渲染成一张可漫游的三维星图（Canvas 2D，无 WebGL、无框架）。
+底层是 [painter-7/memory-starmap](https://github.com/painter-7/memory-starmap)，已 vendored 到 `vendor/memory-starmap/`（未改算法）。
+
+- 顶部选**视图**（每个会话一份，或每个记忆分组一份）→ 点「构建 / 重新构建」
+- 交互：拖拽旋转、滚轮缩放、点星聚焦、`Space` 逐日回放、`R` 复位、`F` 全屏
+- 数据来源：桥接本地状态（`recentMessages` / `activeTopics` / `pendingThoughts` / `memberImpressions`），**不读 DSH 会话内容**
+- 产物：`state/starmap/<dir>/` 下的 `memories.jsonl` / `sources.json` / `starmap.json`
+- 依赖：**Python 3.9+ 与 numpy**（`python -m pip install numpy`）；没装时构建会失败并在页面显示原因
+
+### 记忆分组（默认各自独立）
+
+同一个分栏第二张卡：勾选若干私聊/群 → 填名字 → 「新建分组」。
+
+- 同组会话共享一份记忆空间（`state/memory-groups.json`），星图合并展示
+- 删除分组即恢复各自独立
+- **边界**：分组共享的是桥接侧的轻量记忆与星图；DSH 的对话上下文仍按会话隔离
+
+### 用户权限（访问与安全 → 用户权限表）
+
+按会话勾选 7 项能力，支持批量修改，保存立即生效（`state/permissions.json`）：
+
+| 能力 | 关掉之后 |
+|---|---|
+| 聊天 | 消息直接忽略，不入未读、不唤醒 |
+| 图片生成 / 视频生成 / 翻唱 / 语音回答 / 表情包 | 对应工具返回 403「未被授权」 |
+| 记忆星图 | `qq_starmap` 返回 403（**默认关闭**，管理员恒开） |
+
+- 管理员（`ownerQQ`）恒为全开，表格里那一行不可修改
+- 没有单独设置过的会话 = 默认值（聊天与生成能力默认开，记忆星图默认关）
+- AI 无法给自己提权：`/api/permissions` 只认控制台令牌
+
+### 管理员本机操作（仅 ownerQQ 私聊）
+
+`config.admin.enabled = true` 时，管理员私聊里 AI 可以使用：
+
+| 工具 | 作用 |
+|---|---|
+| `qq_admin_exec` | 执行任意命令（Windows 走 `cmd.exe`，已做 UTF-8/GBK 输出解码） |
+| `qq_admin_fs` | 读/写/追加/列目录/stat/移动/复制/删除文件与目录 |
+| `qq_admin_download` | http(s) 下载到本机路径 |
+| `qq_admin_install` | npm / npm-global / pip / DSH 插件 |
+
+三重校验：`config.admin.enabled` + 有效令牌 + 会话 key 严格等于 `private:<ownerQQ>`；群聊与他人私聊一律 403。
+每次调用写 `state/admin-audit.jsonl`（时间 / key / 操作 / 命令或路径 / 结果码）。
 
 ## 前置条件
 
@@ -275,7 +324,15 @@ qq-bridge/
     self-test.js        # DSH 侧自测
   scripts/              # 测试/运维脚本（含 postinstall 的 patch-snowluma-sdk.mjs）
     patch-snowluma-sdk.mjs  # 修补 SDK 的 ESM 打包 bug（postinstall 自动执行）
+    build-starmap.mjs       # 导出记忆并调用 memory-starmap 构建星图
+  vendor/memory-starmap/  # 记忆星图（第三方，见其中的 NOTICE.md）
+    src/build.py          # 构建器（Python + numpy）
+    web/                  # 纯前端渲染（Canvas 2D）
   state/                # 运行时数据（不入库）
+    starmap/<dir>/        # 星图产物：memories.jsonl / sources.json / starmap.json
+    memory-groups.json    # 记忆分组（哪些会话共享记忆）
+    permissions.json      # 按会话的能力权限
+    admin-audit.jsonl     # 管理员本机操作审计
 ```
 
 > 🎤 **独立的「发语音」工具不在这里**：它是仓库上一级的 [`../voice-tool/`](../voice-tool/)（`voice-cli.mjs` /
@@ -305,7 +362,9 @@ qq-bridge/
 | 表情发送 / 收藏 / 备注 | SnowLuma（表情库初始为空，会随聊天自动积累） |
 | 词汇（黑话）注入与查询 | 无（管理员在「词汇新增」页手动录入） |
 | 人格卡 | 无（`roles/` 已带 3 个示例） |
-| 控制台 10 个页面 | 无 |
+| 控制台 11 个页面 | 无 |
+| 用户权限（7 项能力，批量勾选） | 无 |
+| 管理员本机操作（exec/文件/下载/安装） | 无（`config.admin.enabled` 默认 false，需手动开） |
 
 > 📋 管理员指令速查表（可打印）：**[docs/QQ机器人-管理员指令.docx](docs/QQ机器人-管理员指令.docx)**
 
@@ -322,10 +381,11 @@ qq-bridge/
 | `make-admin-doc.py` | 依赖 python-docx | `pip install python-docx` |
 | `autostart.ps1` / `watchdog.ps1` | 本机路径已改成环境变量 | 设 `QQ_EXE` / `SNOWLUMA_DIR` / `FFMPEG_BIN` |
 | 聊天历史 / 记忆 / 用量 | `state/` 是空的（刻意不带个人数据） | 自动生成，从零开始 |
+| **记忆星图** | 需要 Python + numpy 才能构建（`vendor/memory-starmap/src/build.py`） | `pip install numpy`，然后到控制台「记忆星图」点构建 |
 
 ### Python 依赖清单
 
-只有「语音相关」的功能需要 Python，聊天/画图/视频不依赖。
+只有「语音相关」与「记忆星图」两个功能需要 Python，聊天/画图/视频不依赖。
 
 ```powershell
 pip install numpy                    # TTS/唱歌/翻唱都会用
