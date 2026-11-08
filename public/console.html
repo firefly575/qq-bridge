@@ -1808,7 +1808,22 @@ button:active:not(:disabled) {
       <h2>活动日志（最近 100 条）</h2>
       <pre id="activity">（空）</pre>
     </section>
-<section id="section-persona" data-page="persona" class="card span-all">
+<section id="section-persona" <div class="card span-all" data-page="persona" hidden>
+      <h2>按会话分配人格（可同时使用多张人格卡）</h2>
+      <div class="meta" style="margin-bottom:10px">
+        默认所有人都用下面选的「默认人格」；想给某些人/群换人格，就在表格里单独指定。
+        下拉留空 = 该会话不使用人格卡（纯 agent）。改完点保存，下一条消息生效（已存在的会话建议重置一次）。
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <label style="margin:0">默认人格</label>
+        <select id="roleDefault" style="min-width:200px"></select>
+        <button id="roleAssignSave">保存分配</button>
+        <span id="roleAssignStatus" class="meta"></span>
+      </div>
+      <div id="roleAssignTable" style="margin-top:12px;overflow:auto"></div>
+    </div>
+
+data-page="persona" class="card span-all">
       <h2>人格与角色</h2>
       <div class="meta">当前人格：<span id="roleText">-</span> ｜ 状态：<span id="roleModeText">-</span></div>
 
@@ -4236,6 +4251,116 @@ function showConsoleToast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 4200);
 }
+// ── 按会话分配人格 ───────────────────────────────────────────
+let roleAssignState = { roles: [], default: '', sessions: [] };
+
+async function loadRoleAssignments() {
+  const table = document.getElementById('roleAssignTable');
+  const sel = document.getElementById('roleDefault');
+  if (!table || !sel) return;
+  try {
+    const data = await api('/api/role-assignments', 'GET');
+    roleAssignState = data;
+    sel.innerHTML = '';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = '（不使用人格卡）';
+    sel.appendChild(noneOpt);
+    for (const r of data.roles) {
+      const o = document.createElement('option');
+      o.value = r;
+      o.textContent = r;
+      sel.appendChild(o);
+    }
+    sel.value = data.default || '';
+
+    table.innerHTML = '';
+    if (!data.sessions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'meta';
+      empty.textContent = '还没有会话：先在上面「访问与安全」里加白名单，或先在 QQ 里聊几句。';
+      table.appendChild(empty);
+      return;
+    }
+
+    const t = document.createElement('table');
+    t.style.cssText = 'width:100%;border-collapse:collapse';
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th style="text-align:left;padding:6px">会话</th><th style="text-align:left;padding:6px">人格卡</th><th style="text-align:left;padding:6px">当前生效</th></tr>';
+    t.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const row of data.sessions) {
+      const tr = document.createElement('tr');
+      tr.style.borderTop = '1px solid rgba(0,0,0,.06)';
+
+      const td1 = document.createElement('td');
+      td1.style.padding = '6px';
+      td1.textContent = row.key;
+      tr.appendChild(td1);
+
+      const td2 = document.createElement('td');
+      td2.style.padding = '6px';
+      const sel2 = document.createElement('select');
+      sel2.dataset.roleAssignKey = row.key;
+      const follow = document.createElement('option');
+      follow.value = '__follow__';
+      follow.textContent = '跟随默认';
+      sel2.appendChild(follow);
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = '（不使用人格卡）';
+      sel2.appendChild(none);
+      for (const r of data.roles) {
+        const o = document.createElement('option');
+        o.value = r;
+        o.textContent = r;
+        sel2.appendChild(o);
+      }
+      sel2.value = row.assigned === null || row.assigned === undefined ? '__follow__' : row.assigned;
+      td2.appendChild(sel2);
+      tr.appendChild(td2);
+
+      const td3 = document.createElement('td');
+      td3.style.cssText = 'padding:6px;opacity:.75';
+      td3.textContent = row.effective || '（无）';
+      tr.appendChild(td3);
+
+      tbody.appendChild(tr);
+    }
+    t.appendChild(tbody);
+    table.appendChild(t);
+
+    const status = document.getElementById('roleAssignStatus');
+    if (status) status.textContent = `共 ${data.sessions.length} 个会话 · ${data.roles.length} 张人格卡`;
+  } catch (error) {
+    table.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'meta';
+    div.textContent = '加载失败：' + (error?.message ?? error);
+    table.appendChild(div);
+  }
+}
+
+async function saveRoleAssignments() {
+  const status = document.getElementById('roleAssignStatus');
+  const def = document.getElementById('roleDefault')?.value ?? '';
+  const map = {};
+  for (const sel of document.querySelectorAll('select[data-role-assign-key]')) {
+    if (sel.value === '__follow__') continue;      // 跟随默认 = 不写进 map
+    map[sel.dataset.roleAssignKey] = sel.value;    // 空字符串 = 不用人格卡
+  }
+  try {
+    await api('/api/role-assignments', 'POST', { default: def, map });
+    if (status) status.textContent = `已保存：默认 ${def || '（无）'}，单独指定 ${Object.keys(map).length} 个会话`;
+    showConsoleToast('人格分配已保存');
+    await loadRoleAssignments();
+  } catch (error) {
+    if (status) status.textContent = '保存失败：' + (error?.message ?? error);
+  }
+}
+
+document.getElementById('roleAssignSave')?.addEventListener('click', saveRoleAssignments);
+
 // ── 记忆星图页 ───────────────────────────────────────────────
 let starmapState = { namespaces: [], current: '', token: '' };
 let memGroups = { groups: [], candidates: [] };
@@ -4461,6 +4586,13 @@ function renderPermTable() {
     th.style.cssText = 'padding:6px 8px;white-space:nowrap';
     hr.appendChild(th);
   }
+  {
+    const th = document.createElement('th');
+    th.textContent = '敏感词过滤';
+    th.title = '勾选=过滤（默认）；取消勾选=这个会话不过滤（成人/链接/路径都放行）';
+    th.style.cssText = 'padding:6px 8px;white-space:nowrap';
+    hr.appendChild(th);
+  }
   thead.appendChild(hr);
   table.appendChild(thead);
 
@@ -4494,6 +4626,17 @@ function renderPermTable() {
       box.dataset.key = user.key;
       box.checked = user.perms?.[cap] !== false;
       if (user.owner) { box.disabled = true; box.checked = true; }
+      td.appendChild(box);
+      tr.appendChild(td);
+    }
+    {
+      const td = document.createElement('td');
+      td.style.cssText = 'padding:6px 8px;text-align:center';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.dataset.permSensitive = '1';
+      box.dataset.key = user.key;
+      box.checked = user.sensitive !== false;
       td.appendChild(box);
       tr.appendChild(td);
     }
@@ -4538,6 +4681,11 @@ async function savePermissions() {
     users[key] = users[key] ?? {};
     users[key][cap] = box.checked;
   }
+  for (const box of document.querySelectorAll('input[data-perm-sensitive]')) {
+    const key = box.dataset.key;
+    users[key] = users[key] ?? {};
+    users[key].sensitive = box.checked;
+  }
   const status = document.getElementById('permStatus');
   try {
     const res = await api('/api/permissions', 'POST', { users });
@@ -4581,6 +4729,7 @@ function setConsolePage(page, { updateHash = true, focus = false, target = '' } 
   if (page === 'social-v2' && typeof loadVoiceLibrary === 'function') loadVoiceLibrary();
   if (page === 'media' && typeof loadMediaSettings === 'function') loadMediaSettings();
   if (page === 'access' && typeof loadPermissions === 'function') loadPermissions();
+  if (page === 'persona' && typeof loadRoleAssignments === 'function') loadRoleAssignments();
   if (page === 'starmap' && typeof loadStarmapPage === 'function') loadStarmapPage();
   if (focus) {
     document.getElementById('mainContent').focus({ preventScroll: true });

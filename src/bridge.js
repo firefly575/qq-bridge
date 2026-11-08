@@ -604,6 +604,39 @@ function writeRoleState(role, mode) {
   atomicWriteJson(ROLE_STATE_FILE, { role: role ?? null, mode: mode ?? 'active' });
 }
 
+// ── 按会话的人格分配（v0.1.20）─────────────────────────────────
+// 存储：state/role-assignments.json
+//   { "default": "小鲸鱼", "map": { "private:123": "另一个角色", "group:456": "" } }
+// map 里显式写空字符串 = 这个会话不用人格卡（纯 agent）。
+const ROLE_ASSIGN_FILE = path.join(STATE_DIR, 'role-assignments.json');
+
+function readRoleAssignments() {
+  const raw = readJsonSafe(ROLE_ASSIGN_FILE, null);
+  const def = typeof raw?.default === 'string' ? raw.default : '';
+  const map = (raw?.map && typeof raw.map === 'object' && !Array.isArray(raw.map)) ? raw.map : {};
+  const clean = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (/^(group|private):\d+$/.test(k) && typeof v === 'string') clean[k] = v;
+  }
+  return { default: def, map: clean };
+}
+
+function writeRoleAssignments(next) {
+  const clean = {};
+  for (const [k, v] of Object.entries(next?.map ?? {})) {
+    if (/^(group|private):\d+$/.test(k) && typeof v === 'string') clean[k] = v;
+  }
+  atomicWriteJson(ROLE_ASSIGN_FILE, { default: String(next?.default ?? ''), map: clean });
+}
+
+/** 某会话实际使用的人格名：显式分配优先，否则用默认；都为空 = 不用人格卡 */
+function roleNameFor(key) {
+  const a = readRoleAssignments();
+  if (Object.prototype.hasOwnProperty.call(a.map, key)) return a.map[key];
+  if (a.default) return a.default;
+  return readRoleState().role ?? '';
+}
+
 // 本地补丁：模型模式（api = 走 DSH 会话；local = 直连 Ollama，省钱但无工具）。
 const MODEL_MODE_FILE = path.join(STATE_DIR, 'model-mode.json');
 function readModelMode() {
@@ -5694,6 +5727,53 @@ function startConsoleServer() {
     }
   }
 
+        // ── 按会话的人格分配（不同用户可用不同人格卡）─────────────────
+        if (url.pathname === '/api/role-assignments') {
+          if (req.method === 'GET') {
+            const roles = (() => {
+              try {
+                return fs.readdirSync(ROLES_DIR)
+                  .filter((f) => f.endsWith('.md') && !/^readme$/i.test(f.slice(0, -3)))
+                  .map((f) => f.slice(0, -3));
+              } catch { return []; }
+            })();
+            const social = (() => { try { return JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'social-v2.json'), 'utf8')); } catch { return { conversations: {} }; } })();
+            const keys = new Set([
+              ...Object.keys(social.conversations ?? {}),
+              ...(cfg.allow?.private ?? []).map((id) => `private:${id}`),
+              ...(cfg.allow?.groups ?? []).map((id) => `group:${id}`)
+            ]);
+            const a = readRoleAssignments();
+            sendJson({
+              ok: true,
+              roles,
+              default: a.default,
+              globalRole: readRoleState().role ?? '',
+              sessions: [...keys].sort().map((k) => ({
+                key: k,
+                assigned: Object.prototype.hasOwnProperty.call(a.map, k) ? a.map[k] : null,
+                effective: roleNameFor(k) || ''
+              }))
+            });
+            return;
+          }
+          if (req.method === 'POST') {
+            const body = await readBody();
+            const map = {};
+            if (body.map && typeof body.map === 'object') {
+              for (const [k, v] of Object.entries(body.map)) {
+                if (!/^(group|private):\d+$/.test(k)) continue;
+                if (v === null) continue;                    // null = 跟随默认，不写进 map
+                map[k] = String(v);
+              }
+            }
+            writeRoleAssignments({ default: String(body.default ?? ''), map });
+            log(`控制台：人格分配已更新（默认=${body.default || '（无）'}，${Object.keys(map).length} 个会话单独指定）`);
+            sendJson({ ok: true, default: String(body.default ?? ''), map });
+            return;
+          }
+        }
+
         // ── 记忆分组（决定哪些会话共用一份记忆）──────────────────────
         if (url.pathname === '/api/memory-groups') {
           if (req.method === 'GET') {
@@ -5785,7 +5865,8 @@ function startConsoleServer() {
                 id: Number(id),
                 label: kind === 'group' ? `群 ${id}` : `QQ ${id}`,
                 owner: isOwnerKey(k),
-                perms: permCapsFor(k)
+                perms: permCapsFor(k),
+                sensitive: permCapsFor(k).sensitive !== false
               };
             }).sort((a, b) => (a.kind === b.kind ? a.id - b.id : a.kind === 'private' ? -1 : 1));
             sendJson({ ok: true, caps: PERM_CAPS, labels: PERM_LABELS, defaults: pf.defaults, users });
@@ -5808,8 +5889,11 @@ function startConsoleServer() {
                 for (const cap of PERM_CAPS) {
                   if (typeof caps[cap] === 'boolean') merged[cap] = caps[cap];
                 }
+                // sensitive 不是"能力"而是"是否过滤"的开关，单独存
+                if (typeof caps.sensitive === 'boolean') merged.sensitive = caps.sensitive;
                 // 与默认一致就不落盘，保持文件干净
-                const sameAsDefault = PERM_CAPS.every((cap) => merged[cap] === undefined || merged[cap] === next.defaults[cap]);
+                const sameAsDefault = PERM_CAPS.every((cap) => merged[cap] === undefined || merged[cap] === next.defaults[cap])
+                  && (merged.sensitive === undefined || merged.sensitive === !isOwnerKey(key));
                 if (sameAsDefault) delete next.users[key]; else next.users[key] = merged;
                 changed++;
               }
@@ -7645,6 +7729,10 @@ function startConsoleServer() {
   // 默认 true：与 ownerQQ 私聊时不做敏感内容过滤（成人/敏感话题、链接、本机路径、凭据样式文本都放行）。
   // 设 config.security.ownerBypassSensitive = false 可恢复「一视同仁地过滤」。
   function sensitiveFilterApplies(key) {
+    // 优先级：permissions.json 里该会话的 sensitive 开关 > 全局 owner 豁免 > 默认过滤
+    const pf = readPermFile();
+    const over = pf.users?.[key];
+    if (over && typeof over.sensitive === 'boolean') return over.sensitive;
     if (cfg.security?.ownerBypassSensitive === false) return true;
     return !isOwnerKey(key);
   }
@@ -7706,11 +7794,18 @@ function startConsoleServer() {
   /** 某会话的最终权限（默认值 + 用户覆盖；管理员永远全开） */
   function permCapsFor(key) {
     const base = { ...readPermFile().defaults };
-    if (isOwnerKey(key)) return Object.fromEntries(PERM_CAPS.map((c) => [c, true]));
+    const owner = isOwnerKey(key);
+    // 敏感过滤是「开关」不是「能力」：默认管理员关闭过滤、其他人开启过滤；
+    // 但管理员也能在控制台单独改（存进 users[key].sensitive）。
+    base.sensitive = !owner;
+    if (owner) {
+      for (const cap of PERM_CAPS) base[cap] = true;   // 管理员能力恒全开
+    }
     const over = readPermFile().users[key];
     if (over && typeof over === 'object') {
       for (const cap of PERM_CAPS) if (over[cap] === false) base[cap] = false;
       for (const cap of PERM_CAPS) if (over[cap] === true) base[cap] = true;
+      if (typeof over.sensitive === 'boolean') base.sensitive = over.sensitive;
     }
     return base;
   }
@@ -7830,7 +7925,7 @@ function startConsoleServer() {
     const mode = readModelMode();
     const model = String(mode.model || lm.model || 'deepseek-r1:1.5b');
     const roleState = readRoleState();
-    const roleHint = currentMode === 'reserved2' ? currentRoleHintV2() : currentRoleHint();
+    const roleHint = currentMode === 'reserved2' ? currentRoleHintV2(key) : currentRoleHint(key);
     const st = getSocialV2State(key);
     // 小模型上下文小（num_ctx 4096 ≈ 2000 汉字），角色卡动辄上万字、历史也可能很长，
     // 这里按字符预算裁剪：先截角色卡，再截历史，避免 Ollama 报 exceed_context_size。
@@ -9861,9 +9956,9 @@ function startConsoleServer() {
   // 缓存 key 为两个文件的 mtime，mtime 未变时直接返回，避免每次同步读文件。
   let roleHintCache = { key: '', raw: '' };
   // 原始人格卡（按 mtime 缓存，不截断）。
-  function roleRawContent() {
+  function roleRawContent(roleName) {
     try {
-      const rs = readRoleState();
+      const rs = { role: roleName !== undefined ? roleName : readRoleState().role };
       if (!rs.role) return '';
       // 读取点也必须校验人格名：写入点（控制台 /role 命令）都过 sanitizeRoleName，
       // 但 state/current-role.json 是**用户可直接编辑**的文件。没有这道校验时，
@@ -9893,13 +9988,14 @@ function startConsoleServer() {
   }
   // 按仿真模式取用：先用标题里的 〔一代〕/〔二代〕 标记筛掉另一模式的专属小节，
   // **再**按上限截断——这样另一模式的内容不会白白占掉本次的注入预算。
-  function roleHintForMode(mode) {
-    const selected = selectRoleText(roleRawContent(), mode);
+  function roleHintForMode(mode, key) {
+    const name = key ? roleNameFor(key) : (readRoleState().role ?? '');
+    const selected = selectRoleText(roleRawContent(name), mode);
     if (!selected) return '';
     return selected.length > roleInjectMaxChars ? truncateText(selected, roleInjectMaxChars) : selected;
   }
-  function currentRoleHint() {
-    return roleHintForMode('v1');
+  function currentRoleHint(key) {
+    return roleHintForMode('v1', key);
   }
 
   // DeepSeek娘聊天模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
@@ -9989,9 +10085,9 @@ function startConsoleServer() {
     return `第 ${bad.join('，')} 条之间像是把同一句话拆开了；如果两条拼起来才完整，请合并成一条，或把断点移到完整句子的边界。`;
   }
 
-  function currentRoleHintV2() {
+  function currentRoleHintV2(key) {
     // 先按 〔二代〕/〔一代〕 标记筛小节；下面的逐行过滤只是给「没标记的老卡片」兜底。
-    const raw = roleHintForMode('v2');
+    const raw = roleHintForMode('v2', key);
     if (!raw) return '';
     // 一代仿真模式专用指令整行过滤，避免污染二代工具协议。
     // 用 role-card.js 导出的那份（文件顶部已 import）：这里原先又抄了一份同源正则，
@@ -10602,7 +10698,9 @@ function startConsoleServer() {
 
   function buildWakePromptV2(key, reason) {
     const roleState = readRoleState();
-    const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
+    // 按会话的人格：不同人可以用不同人格卡（state/role-assignments.json）
+    const effectiveRole = roleNameFor(key) || '';
+    const roleLine = effectiveRole ? `【当前角色】${effectiveRole}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     // 管理员会话：直接把「你可以操作本机」写进每轮提示，避免依赖预设文案是否已重载。
@@ -11662,7 +11760,7 @@ function startConsoleServer() {
     }
 
     // 角色扮演提示注入（仅注入给 agent，不影响群友之间的正常对话语义）
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(key);
 
     // 群聊里带发送者信息，私聊不用；角色提示注入到消息开头（agent 可见）；
     // 管理员消息带身份标记（供 agent 识别，但其权限仍受工具面硬限制）

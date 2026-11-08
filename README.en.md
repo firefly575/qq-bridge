@@ -2,7 +2,7 @@
 
 > Connect QQ messages to DeepSeek Harness (DSH) agents: QQ friends/groups become DSH conversations, and agent replies (including questions and tool approvals) are sent back to QQ.
 
-> ⚠️ **Current release `0.1.19`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
+> ⚠️ **Current release `0.1.20`** (see [package.json](package.json)), verified item by item on **DSH 0.1.7**.
 > It relies on DSH Cookie auth, slash RPC (`/api/<namespace>/<method>`) and the `/api/remote.mux` event stream — a protocol generation introduced in DSH `0.1.2-alpha.1` and **incompatible with the older dot-endpoint protocol**.
 >
 > Differences from upstream (legacy "v1 simulation" removed, default mode `reserved2`, added voice / image / video / cover and the "generate" console page) are listed in the Chinese [来源与改动](#来源与改动) section.
@@ -173,3 +173,12 @@ SnowLuma is an independent third-party project and is not affiliated with Tencen
   credential-looking text are all answered normally, and the bridge does not block them either.
 - Group chats and other private chats keep the default boundary.
 - Toggle: `security.ownerBypassSensitive` in `config.json` (**default `true`**).
+
+### Per-session role cards & sensitive filter
+
+- **Role cards per conversation** — the persona page assigns a card per private chat / group
+  (`state/role-assignments.json`): pick a default card, then override individual sessions. Multiple cards can be
+  active at the same time; leave a session empty to run it without any role card.
+- **Sensitive filter per conversation** — the permissions table has a "sensitive filter" column:
+  ticked = filter (default for non-owners), unticked = no filter for that chat (adult topics, links, local paths and
+  credential-looking text all pass). The owner row is unticked by default. Stored as `users[key].sensitive`.
