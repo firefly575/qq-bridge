@@ -3248,10 +3248,15 @@ function startConsoleServer() {
             '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml',
             '.woff2': 'font/woff2', '.wasm': 'application/wasm'
           };
+          // 注意：不能套用全局 SECURITY_HEADERS —— 里面的 X-Frame-Options: DENY 会让
+          // 控制台里的 iframe 直接显示「拒绝连接」。星图要允许同源嵌入。
           res.writeHead(200, {
             'content-type': types[ext] ?? 'application/octet-stream',
             'cache-control': 'no-store',
-            ...SECURITY_HEADERS
+            'X-Frame-Options': 'SAMEORIGIN',
+            'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'",
+            'X-Content-Type-Options': 'nosniff',
+            'Referrer-Policy': 'no-referrer'
           });
           try { res.end(fs.readFileSync(found)); } catch { res.end(); }
           return;
