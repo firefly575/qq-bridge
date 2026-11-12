@@ -1,60 +1,54 @@
-# v0.1.21
+# v0.1.22
 
-两个界面 bug 修复，都出在 v0.1.20 的 UI 插入上。
+修一个**会导致回复丢失**的 bug：事件流每次处理回复都抛异常中断。
 
-## 1. 人格与角色的内容出现在每一个分栏
+## 症状
 
-**原因**：v0.1.20 插入「按会话分配人格」卡片时，落点正好在 persona 那段的开标签中间：
-
-```html
-<!-- 坏的 -->
-<section id="section-persona" <div class="card span-all" data-page="persona" hidden>
-```
-
-`<section>` 开标签被劈开后，这个段落**丢掉了 `data-page="persona"`**，于是切换页面时它不会被隐藏 —— 结果「按会话分配人格」在人设页之外的每一页都显示。
-
-**修法**：把卡片提出来独立成块，并把 section 开标签补回来：
-
-```html
-<div class="card span-all" data-page="persona" hidden>…按会话分配人格…</div>
-
-<section id="section-persona" data-page="persona" class="card span-all">
-```
-
-校验：
+桥接日志里反复出现：
 
 ```
-div: 243/243 ✅   section: 18/18 ✅
-各页 data-page 元素: overview 6 / sessions 2 / persona 2 / social-v2 1 / media 1 /
-                     slang 1 / reference 1 / starmap 2 / access 4 / operations 3 / usage 1
-persona 只有 2 个元素，都带 hidden 或本身是 section ✅
+事件流中断: isSocialEnabled is not defined
+连接 DSH 事件流…        ← 立刻重连，但这一轮的处理已经丢了
 ```
 
-## 2. 找不到「敏感词过滤」
+因为异常发生在 agent 回复处理路径上，该轮回复可能没发出去，且事件流每次都要重连。
 
-**原因**：这一列确实渲染了，但排在能力列**最后**（第 10 列）。表格宽、卡片窄时会横向滚动，第一屏看不到。
+## 原因
 
-**修法**：
+`src/bridge.js` 里有一处调用 `isSocialEnabled()`（判断「真人化社交模式」是否开启，决定回复是否走时间线多段发送），但**这个函数在文件里从来没定义过** —— 只要走到那条分支就是 `ReferenceError`。
 
-- 把「敏感词过滤」挪到 **「会话」右边第一列**，并加了浅黄底色，默认第一屏可见
-- 卡片说明里写明位置与语义（勾选=过滤，取消=不过滤；管理员默认不过滤）
-- 说明末尾提示「表格较宽时可在区域内左右滚动」
+## 修法
 
-## 版本
+补上定义（与 `config.json` 里 `social.enabled` 的默认语义一致）：
 
-- `package.json` / README / README.en.md 版本号 → `0.1.21`
+```js
+function isSocialEnabled() {
+  return cfg.social?.enabled !== false;
+}
+```
+
+## 顺带说明：一次「设备下线期间的消息没回复」
+
+排查时确认了这条链路：**SnowLuma 掉线期间收到的消息不会补发**——桥接侧根本没收到事件，`state/social-v2.json` 里也没有任何未读记录，所以既没有"漏回"，也没有可以补回的原文。
+
+处理办法（已对 `private:3964835308` 执行过）：用控制台的「后台提醒」接口
+（`POST /api/console/notify-ai`）告诉 AI「你刚才掉线了，对方发的东西没收到」，让它自己用
+`qq_send_message` 回一句。实际发出：
+
+```
+刚才我这边断了一下 你发的没收到
+再说一遍呗
+```
+
+这个接口适合任何"消息在离线期丢失、想让 AI 主动说一句"的场景。
 
 ## 升级
 
 ```bash
 git pull
-# 重启桥接；控制台 Ctrl+F5 硬刷新（必须硬刷新，页面文件变了）
+# 重启桥接
 ```
 
-## 现在控制台的结构
+## 验证
 
-```
-运行总览 / 会话与审批 / 人格与角色（+ 按会话分配人格）/ DeepSeek娘聊天 /
-生成能力 / 词汇新增 / ✦ 记忆星图 / 令牌与花费 / 访问与安全（+ 用户权限表，含敏感词过滤列）/
-调试与运维 / 工具参考
-```
+重启后日志里不应再出现 `isSocialEnabled is not defined`；`state/bridge.log` 里「连接 DSH 事件流…」也不该每 3 秒刷一次。

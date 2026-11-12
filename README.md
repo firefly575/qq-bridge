@@ -35,7 +35,7 @@
 
 把 QQ 消息接入 DSH agent：QQ 好友/群发来的消息会变成 DSH 会话里的用户消息，agent 的回复（含提问、工具审批）会发回 QQ。
 
-> ⚠️ **当前版本 `0.1.21`**（见 [package.json](package.json)），在 **DSH 0.1.7** 上逐项实测。
+> ⚠️ **当前版本 `0.1.22`**（见 [package.json](package.json)），在 **DSH 0.1.7** 上逐项实测。
 > 依赖 DSH 的 Cookie 鉴权、斜杠 RPC（`/api/<namespace>/<method>`）与 `/api/remote.mux` 事件流；这套协议自 DSH `0.1.2-alpha.1` 起引入，**与更早的点号 endpoint 协议不兼容**。
 >
 > 与上游相比的差异（一代仿真下线、默认模式 `reserved2`、新增语音/画图/视频/翻唱与「生成能力」控制台）见上文 [来源与改动](#来源与改动)。

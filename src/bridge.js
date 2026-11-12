@@ -9762,6 +9762,13 @@ function startConsoleServer() {
   loadSocialV2State();
 
 
+  // 「真人化社交模式」开关：控制 agent 文本回复是否走时间线多段发送。
+  // 注意：这个函数此前被调用却没有定义，导致事件流每次处理回复都抛
+  // "isSocialEnabled is not defined" 并中断事件流（消息可能因此丢失）。
+  function isSocialEnabled() {
+    return cfg.social?.enabled !== false;
+  }
+
   function socialState(key) {
     if (!social.states.has(key)) {
       social.states.set(key, { phase: 'idle', lastCheckAt: 0, nextCheckAt: 0, lastActiveMessageAt: 0, activeEnteredAt: 0, activeDeadlineAt: 0, activeExitAt: 0, lastAiReplyAt: 0, lastFollowUpAt: 0, probeDeadline: 0, proactiveNextCheckAt: 0 });
